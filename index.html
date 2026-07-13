@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1c2733">
+<title>OtoScope — 音の埋め込み観測ノート</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <button id="drawerBtn" class="mini">☰ 設定</button>
+  <h1>🔊 OtoScope</h1>
+  <nav class="seg">
+    <button id="navMeasure" class="mini on">🎙 測定</button>
+    <button id="navAnalyze" class="mini">📊 レコード解析</button>
+  </nav>
+  <span id="modelStatus" class="chip">モデル読込中…</span>
+  <button id="learnBtn" class="mini">📖 まなびナビ</button>
+</header>
+
+<div id="backdrop" hidden></div>
+<aside id="drawer">
+  <div class="dlghead"><b>⚙ 設定</b><button id="drawerClose" class="mini">✕ 閉じる</button></div>
+  <section>
+    <h2>測定設定</h2>
+    <label>シリーズ（測定場所・対象）
+      <span class="inline">
+        <select id="seriesSel"></select>
+        <button id="addSeries" class="mini">＋新規</button>
+      </span>
+    </label>
+    <label>録音時間（秒）
+      <select id="durSel"><option>3</option><option selected>5</option><option>10</option></select>
+    </label>
+    <label class="check"><input type="checkbox" id="rawChk" checked>
+      生に近い音で録る（AGC等のOFFを要求）</label>
+    <p class="hint">実際に適用された録音条件は毎回記録され、同シリーズで前回と違うと警告します。</p>
+  </section>
+  <section>
+    <h2>データ <span id="storageInfo" class="chip"></span></h2>
+    <div class="inline wrap">
+      <button id="exportBtn" class="mini">JSONエクスポート</button>
+      <label class="mini btnlike">インポート<input type="file" id="importFile" accept=".json" hidden></label>
+      <button id="clearBtn" class="mini danger">全削除</button>
+    </div>
+    <p class="hint">音声・埋め込み・メモはすべて端末内（IndexedDB）。モデルもこのアプリから配信され、外部への通信はありません。エクスポートJSONに音声は含まれません。</p>
+  </section>
+</aside>
+
+<main id="viewMeasure">
+  <section class="card center">
+    <div class="chip">📍 <b id="curSeries"></b> ／ <span id="curDur"></span>秒録音 <button id="condBtn" class="mini">変更</button></div>
+    <button id="recBtn">🎙 音測定スタート</button>
+    <div id="live" hidden><div id="levelBar"></div><span id="countdown"></span></div>
+    <p class="hint">毎回の測定は YAMNet（意味的1024次元）と DSP特徴（物理的80次元）の両方で埋め込まれ、音声ごと端末内に保存されます。</p>
+  </section>
+
+  <section class="card" id="result" hidden>
+    <h2>今回の測定結果</h2>
+    <div id="similarity"></div>
+    <div id="quality"></div>
+    <div id="reco"></div>
+    <div id="topClasses"></div>
+    <canvas id="waveCv" height="70"></canvas>
+    <canvas id="specCv" height="110"></canvas>
+    <button id="openLatest" class="mini">🔎 詳細分析（再生・帯域・メモ）</button>
+  </section>
+</main>
+
+<main id="viewAnalyze" hidden>
+  <nav class="seg tabs">
+    <button data-tab="stack" class="mini on">🎨 カラーマップ</button>
+    <button data-tab="map" class="mini">🗺 埋め込みマップ</button>
+    <button data-tab="list" class="mini">📋 レコード一覧</button>
+  </nav>
+
+  <section class="card" id="tab-stack">
+    <h2>全レコードの音紋（1行 = 1測定）</h2>
+    <div class="scrolly"><canvas id="stackCv"></canvas></div>
+    <p class="hint" id="stackInfo">横軸=周波数（メル尺度）・縦=測定（上が古い）。明るい=強い。行をクリックで詳細を開く。</p>
+  </section>
+
+  <section class="card" id="tab-map" hidden>
+    <h2>埋め込みマップ（PCAで2次元に投影）
+      <span class="seg">
+        <label class="check"><input type="radio" name="space" value="yamnet" checked>YAMNet空間</label>
+        <label class="check"><input type="radio" name="space" value="dsp">DSP空間</label>
+      </span>
+    </h2>
+    <canvas id="mapCv" height="320"></canvas>
+    <div id="legend"></div>
+    <p class="hint">点が近い＝似た音。塊＝いつもの音、外れ点＝いつもと違う音。点クリックで詳細。📝=異常メモあり。軸自体に意味はない。</p>
+  </section>
+
+  <section class="card" id="tab-list" hidden>
+    <h2>レコード一覧 <span class="chip">行クリックで詳細</span></h2>
+    <div class="scroll"><table id="logTable">
+      <thead><tr><th>日時</th><th>シリーズ</th><th>判定上位</th><th>類似度</th><th>メモ</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+</main>
+
+<dialog id="detailDlg">
+  <div class="dlghead"><b id="dlgTitle"></b><button class="mini" id="dlgClose">✕ 閉じる</button></div>
+  <div id="dlgInfo" class="hint"></div>
+  <div class="inline wrap toolbar">
+    <span class="seg">
+      <button id="modeView" class="mini on">🔍 表示</button><button id="modeBand" class="mini">🎯 帯域選択</button>
+    </span>
+    <button id="playOrig" class="mini">▶ 原音</button>
+    <button id="playMute" class="mini" disabled>▶ 帯域ミュート</button>
+    <button id="playOnly" class="mini" disabled>▶ 帯域のみ</button>
+    <button id="zoomReset" class="mini">全体表示</button>
+  </div>
+  <canvas id="bigSpec" height="300"></canvas>
+  <p class="hint" id="readout">ホバー: 時刻・周波数 ／ ホイール: 時間ズーム（ダブルクリックで全体） ／ ドラッグ: 表示=パン・帯域選択=周波数帯をマーク（選択後すぐ試聴）</p>
+  <div id="bandList" class="inline wrap"></div>
+  <label>異常メモ（あなたが付ける貴重な分析ラベル。シリーズ横断のレコメンドに使われます）
+    <textarea id="noteText" rows="2" placeholder="例: 3kHz付近にキーンという高周波が混ざる。ベアリング劣化？"></textarea>
+  </label>
+  <div class="inline"><button id="noteSave" class="mini">💾 メモ保存</button></div>
+  <div id="dlgSimilar"></div>
+</dialog>
+
+<dialog id="learnDlg">
+  <div class="dlghead"><b>📖 まなびナビ — 解釈が命</b><button class="mini" id="learnClose">✕ 閉じる</button></div>
+
+  <details><summary>① スマホで録った音は「生データ」ではない</summary>
+    <p>スマホやPCのマイク入力は、通話や動画向けに<b>何重ものDSP（信号処理）</b>を通っています。</p>
+    <ul>
+      <li><b>AGC（自動ゲイン制御）</b>: 小さい音は増幅、大きい音は抑える。→ <b>音量の絶対値は信用できない</b></li>
+      <li><b>ノイズ抑制</b>: 定常的な「ゴー」という音（換気扇・モーター等）を消そうとする。→ 設備音の観測では致命的</li>
+      <li><b>エコーキャンセル / ハイパスフィルタ</b>: 低い周波数が削られていることがある</li>
+    </ul>
+    <p>「生に近い音で録る」ONでこれらのOFFを<b>要求</b>しますが、OSや機種によっては無視されます。重要なのはON/OFFの選択そのものより<b>毎回同じ条件で測ること</b>。本ツールは録音毎に実際に適用された条件を記録し、同じシリーズで前回と条件が変わると警告します。</p>
+  </details>
+
+  <details><summary>② 「埋め込み（Embedding）」とは何か</summary>
+    <p>音のような複雑なデータを、<b>特徴を要約した数値のベクトル（座標）</b>に変換したものです。似た音は近い座標に、違う音は遠い座標になります。本ツールは毎回の測定を2種類の埋め込みで<b>同時に</b>記録します。</p>
+    <ul>
+      <li><b>YAMNet（意味的）</b>: 200万本以上の音声で学習済みのニューラルネット。「話し声」「機械音」「水の音」など<b>音の意味</b>を捉えた1024次元。521種類の音クラス判定も同時に出ます。</li>
+      <li><b>DSP特徴（物理的）</b>: メルスペクトログラムの各帯域の平均と変動を並べた80次元。<b>周波数バランスと変動の大きさ</b>という物理量そのもの。</li>
+    </ul>
+    <p>意味は同じでも音色が違う（またはその逆の）ケースで両者の見え方が変わります。地図を両空間で見比べるのが解釈のコツ。本ツールは判定AIを作りません。<b>ただ埋め込んで、並べて、人が解釈する</b>ためのツールです。</p>
+  </details>
+
+  <details><summary>③ スペクトログラムの軸と読み方</summary>
+    <p><b>横軸=時間、縦軸=周波数（Hz）、色=その周波数の強さ</b>です。縦軸は人の聴覚に合わせたメル尺度（低い音ほど細かく）。</p>
+    <ul>
+      <li>横に続く明るい線 = 持続音（モーターのハム、ファンの回転音、電源ノイズ）</li>
+      <li>縦の明るい筋 = 瞬間的な音（打撃、クリック）</li>
+      <li>帯域選択は<b>縦方向（＝周波数範囲）をドラッグ</b>してマークします</li>
+    </ul>
+  </details>
+
+  <details><summary>④ 異音の「犯人の周波数」を特定する（帯域ミュート法）</summary>
+    <ol>
+      <li>カラーマップやマップで気になるレコードを開き、<b>いつもの測定と見比べて明るさが違う帯域</b>を探す</li>
+      <li>「帯域選択」モードでその周波数帯を縦にドラッグ（複数の帯域を追加できます。チップで有効/無効・削除）</li>
+      <li><b>「帯域ミュート」で再生</b> → 異音が消えたらその帯域が犯人。<b>「帯域のみ」</b>で異音だけを確認</li>
+      <li>異常メモに「3kHz付近のキーン音」のように書いて保存 → 根拠を持って人に説明できる</li>
+    </ol>
+  </details>
+
+  <details><summary>⑤ 定点観測（簡易異常検知）のコツ</summary>
+    <ul>
+      <li>シリーズを場所・対象ごとに分ける（例:「工場A-ポンプ」「自宅-電子レンジ」）</li>
+      <li>毎回<b>同じ端末・同じ距離・同じ向き</b>で測る。まず正常時のデータを10回以上ためる</li>
+      <li>「類似度」は同シリーズ過去平均とのコサイン類似度。目安: 0.90以上=いつも通り / 0.75〜0.90=やや違う / 0.75未満=かなり違う（環境により要調整）</li>
+      <li>品質警告（クリッピング・無音・いつもより静か等）は「異常」ではなく<b>測り方のミス</b>の可能性を疑うサイン</li>
+      <li>時間で音が変わる対象（電子レンジ等）は、動作フェーズごとにシリーズを分けると解像度が上がる</li>
+    </ul>
+  </details>
+
+  <details><summary>⑥ このPoCの限界と将来</summary>
+    <ul>
+      <li>データは<b>この端末のこのブラウザ内（IndexedDB）</b>にしかない。サイトデータ削除で消える → こまめにJSONエクスポートを（音声は含まれない）</li>
+      <li>モデル・ライブラリ含め全てこのアプリから配信され、<b>外部への通信は一切ない</b>（録音データがネットに出ることはない）</li>
+      <li>人の声も埋め込めるが、話者や感情の特定用途にはYAMNetは粗い（専用モデルの領域）</li>
+      <li>将来: クラウド送信・複数端末の統合・カスタム埋め込みモデルの追加</li>
+    </ul>
+  </details>
+</dialog>
+
+<footer>OtoScope PoC — 音声・埋め込み・メモはすべて端末内（IndexedDB）に保持。モデルも同梱配信で外部通信はありません。</footer>
+
+<script src="vendor/tf.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

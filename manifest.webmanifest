@@ -1,0 +1,9 @@
+{
+  "name": "OtoScope — 音の埋め込み観測ノート",
+  "short_name": "OtoScope",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#1c2733",
+  "theme_color": "#1c2733",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
