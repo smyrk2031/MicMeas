@@ -95,6 +95,7 @@
           <span class="seg">
             <label class="check"><input type="radio" name="space" value="yamnet" checked>YAMNet</label>
             <label class="check"><input type="radio" name="space" value="dsp">DSP</label>
+            <label class="check"><input type="radio" name="space" value="melcnn">MelCNN</label>
           </span>
         </h2>
         <div class="chart-tools">
@@ -119,7 +120,15 @@
 </main>
 
 <dialog id="detailDlg">
-  <div class="dlghead"><b id="dlgTitle"></b><button class="mini" id="dlgClose">✕ 閉じる</button></div>
+  <div class="dlghead">
+    <div class="inline recnav">
+      <button id="prevRec" class="mini" title="前のレコード（←）">◀</button>
+      <span id="recPos" class="chip"></span>
+      <button id="nextRec" class="mini" title="次のレコード（→）">▶</button>
+    </div>
+    <b id="dlgTitle"></b>
+    <button class="mini" id="dlgClose">✕ 閉じる</button>
+  </div>
   <div id="dlgInfo" class="hint"></div>
   <div class="inline wrap toolbar">
     <span class="seg">
@@ -133,10 +142,21 @@
   <canvas id="bigSpec" height="300"></canvas>
   <p class="hint" id="readout">ホバー: 時刻・周波数 ／ ピンチ・ホイール: 時間ズーム（ダブルクリック／全体表示でリセット） ／ ドラッグ: 表示=パン・帯域選択=周波数帯をマーク</p>
   <div id="bandList" class="inline wrap"></div>
-  <label>異常メモ（あなたが付ける貴重な分析ラベル。シリーズ横断のレコメンドに使われます）
-    <textarea id="noteText" rows="2" placeholder="例: 3kHz付近にキーンという高周波が混ざる。ベアリング劣化？"></textarea>
-  </label>
-  <div class="inline"><button id="noteSave" class="mini">💾 メモ保存</button></div>
+
+  <div id="labelBox" class="labelbox">
+    <div class="inline wrap">
+      <span class="labellead">ラベル</span>
+      <span class="seg">
+        <button id="lblNormal" class="mini">🟢 正常</button>
+        <button id="lblAbnormal" class="mini">🔴 異常</button>
+      </span>
+      <span class="hint">（← →キーで隣のレコードへ。移動時に自動保存され、次のレコードは前のラベルを初期値に引き継ぎます）</span>
+    </div>
+    <label>異常の内容・メモ（分析ラベルとしてシリーズ横断レコメンドに使われます）
+      <textarea id="noteText" rows="2" placeholder="例: 3kHz付近にキーンという高周波が混ざる。ベアリング劣化？"></textarea>
+    </label>
+    <div class="inline"><button id="noteSave" class="mini">💾 ラベル保存</button></div>
+  </div>
   <div id="dlgSimilar"></div>
 </dialog>
 

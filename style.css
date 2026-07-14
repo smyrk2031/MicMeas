@@ -82,6 +82,18 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); }
 .dlghead { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
 .toolbar { margin: 8px 0; }
 #bandList { margin: 8px 0; }
+
+.recnav { gap: 6px; }
+.recnav .mini { background: #1a2530; color: #cfe0ee; padding: 4px 10px; }
+.recnav .mini:disabled { opacity: .35; }
+#recPos { font-variant-numeric: tabular-nums; }
+
+.labelbox { background: #1f2a37; border-radius: 10px; padding: 10px 12px; margin: 10px 0;
+  border-left: 3px solid #3a4a5c; }
+.labelbox.is-abnormal { border-left-color: #e53935; }
+.labelbox .labellead { font-size: .82rem; color: #9db3c8; }
+#lblNormal.on { background: #43a047; color: #fff; }
+#lblAbnormal.on { background: #e53935; color: #fff; }
 #similarity { font-size: 1.05rem; margin: 6px 0; text-align: left; }
 #topClasses { font-size: .86rem; color: #b8c9d9; margin: 4px 0; text-align: left; }
 #result { text-align: left; }
