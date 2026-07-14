@@ -72,27 +72,41 @@
 
 <main id="viewAnalyze" hidden>
   <nav class="seg tabs">
-    <button data-tab="stack" class="mini on">🎨 カラーマップ</button>
-    <button data-tab="map" class="mini">🗺 埋め込みマップ</button>
+    <button data-tab="viz" class="mini on">🎨 可視化</button>
     <button data-tab="list" class="mini">📋 レコード一覧</button>
   </nav>
 
-  <section class="card" id="tab-stack">
-    <h2>全レコードの音紋（1行 = 1測定）</h2>
-    <div class="scrolly"><canvas id="stackCv"></canvas></div>
-    <p class="hint" id="stackInfo">横軸=周波数（メル尺度）・縦=測定（上が古い）。明るい=強い。行をクリックで詳細を開く。</p>
-  </section>
+  <section id="tab-viz">
+    <div class="viz-grid">
+      <div class="card viz-panel">
+        <h2>全レコードの音紋（1行 = 1測定）</h2>
+        <div class="chart-tools">
+          <button id="stackZoomOut" class="mini" title="縮小">−</button>
+          <button id="stackZoomIn" class="mini" title="拡大">＋</button>
+          <button id="stackZoomReset" class="mini">全体</button>
+          <button id="selClear" class="mini" hidden>選択解除</button>
+        </div>
+        <div class="scrolly" id="stackWrap"><canvas id="stackCv"></canvas></div>
+        <p class="hint" id="stackInfo">横軸=周波数（メル）・縦=測定（上が古い）。タップで選択／埋込と連動。ダブルクリックで詳細。ピンチ・ホイールでズーム、ドラッグでパン。</p>
+      </div>
 
-  <section class="card" id="tab-map" hidden>
-    <h2>埋め込みマップ（PCAで2次元に投影）
-      <span class="seg">
-        <label class="check"><input type="radio" name="space" value="yamnet" checked>YAMNet空間</label>
-        <label class="check"><input type="radio" name="space" value="dsp">DSP空間</label>
-      </span>
-    </h2>
-    <canvas id="mapCv" height="320"></canvas>
-    <div id="legend"></div>
-    <p class="hint">点が近い＝似た音。塊＝いつもの音、外れ点＝いつもと違う音。点クリックで詳細。📝=異常メモあり。軸自体に意味はない。</p>
+      <div class="card viz-panel">
+        <h2>埋め込みマップ（PCA）
+          <span class="seg">
+            <label class="check"><input type="radio" name="space" value="yamnet" checked>YAMNet</label>
+            <label class="check"><input type="radio" name="space" value="dsp">DSP</label>
+          </span>
+        </h2>
+        <div class="chart-tools">
+          <button id="mapZoomOut" class="mini" title="縮小">−</button>
+          <button id="mapZoomIn" class="mini" title="拡大">＋</button>
+          <button id="mapZoomReset" class="mini">全体</button>
+        </div>
+        <canvas id="mapCv" height="360"></canvas>
+        <div id="legend"></div>
+        <p class="hint">●通常 ◆メモあり ◎最新。点が近い＝似た音。タップでカラーマップと連動選択、ダブルクリックで詳細。ピンチ・ホイール／ドラッグでズーム・パン。</p>
+      </div>
+    </div>
   </section>
 
   <section class="card" id="tab-list" hidden>
@@ -117,7 +131,7 @@
     <button id="zoomReset" class="mini">全体表示</button>
   </div>
   <canvas id="bigSpec" height="300"></canvas>
-  <p class="hint" id="readout">ホバー: 時刻・周波数 ／ ホイール: 時間ズーム（ダブルクリックで全体） ／ ドラッグ: 表示=パン・帯域選択=周波数帯をマーク（選択後すぐ試聴）</p>
+  <p class="hint" id="readout">ホバー: 時刻・周波数 ／ ピンチ・ホイール: 時間ズーム（ダブルクリック／全体表示でリセット） ／ ドラッグ: 表示=パン・帯域選択=周波数帯をマーク</p>
   <div id="bandList" class="inline wrap"></div>
   <label>異常メモ（あなたが付ける貴重な分析ラベル。シリーズ横断のレコメンドに使われます）
     <textarea id="noteText" rows="2" placeholder="例: 3kHz付近にキーンという高周波が混ざる。ベアリング劣化？"></textarea>

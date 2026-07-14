@@ -1,5 +1,5 @@
 * { box-sizing: border-box; }
-body { margin: 0 auto; max-width: 980px; padding: 12px; font-family: system-ui, sans-serif;
+body { margin: 0 auto; max-width: 1280px; padding: 12px; font-family: system-ui, sans-serif;
   background: #1c2733; color: #e8eef4; line-height: 1.65; }
 header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
 header h1 { margin: 0; font-size: 1.35rem; }
@@ -57,9 +57,17 @@ button:disabled { opacity: .45; cursor: default; }
 
 canvas { width: 100%; border-radius: 8px; background: #0d1620; margin-top: 8px; display: block; touch-action: none; }
 #bigSpec { cursor: crosshair; }
-#mapCv, #stackCv { cursor: pointer; }
+#mapCv, #stackCv { cursor: grab; }
 #stackCv { margin-top: 0; }
-.scrolly { max-height: 420px; overflow-y: auto; border-radius: 8px; margin-top: 8px; }
+.scrolly { max-height: 480px; overflow: auto; border-radius: 8px; margin-top: 8px; }
+.viz-grid { display: grid; gap: 12px; grid-template-columns: 1fr; }
+@media (min-width: 900px) {
+  .viz-grid { grid-template-columns: 1fr 1fr; align-items: start; }
+}
+.viz-panel { margin-bottom: 0; }
+.chart-tools { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 0; }
+.chart-tools .mini { background: #1a2530; color: #cfe0ee; }
+.sel-chip { border: 1px solid #ffd54f; color: #ffecb3; background: #3a3420; }
 .hint { font-size: .76rem; color: #8aa0b5; margin: 6px 0 0; }
 .scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: .82rem; white-space: nowrap; }
