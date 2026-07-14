@@ -19,10 +19,12 @@ const seriesColor = sid => COLORS[CFG.series.findIndex(s => s.id === sid) % COLO
 let MEAS = [];                              // 全測定（音声以外）をメモリに常駐
 let db;
 const idbOpen = () => new Promise((res, rej) => {
-  const q = indexedDB.open('otoscope', 1);
+  const q = indexedDB.open('otoscope', 2);
   q.onupgradeneeded = () => {
-    q.result.createObjectStore('meas', { keyPath: 't' });
-    q.result.createObjectStore('audio', { keyPath: 't' });
+    const d = q.result;
+    if (!d.objectStoreNames.contains('meas')) d.createObjectStore('meas', { keyPath: 't' });
+    if (!d.objectStoreNames.contains('audio')) d.createObjectStore('audio', { keyPath: 't' });
+    if (!d.objectStoreNames.contains('models')) d.createObjectStore('models', { keyPath: 'id' });
   };
   q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
 });
@@ -660,8 +662,9 @@ function standardizer(X, idx) {               // 学習foldから列ごとの平
   for (let j = 0; j < d; j++) mean[j] /= idx.length;
   for (const i of idx) { const xi = X[i]; for (let j = 0; j < d; j++) { const dv = xi[j] - mean[j]; std[j] += dv * dv; } }
   for (let j = 0; j < d; j++) std[j] = Math.sqrt(std[j] / idx.length) || 1;
-  return v => v.map((x, j) => (x - mean[j]) / std[j]);
+  return { mean, std, fn: v => v.map((x, j) => (x - mean[j]) / std[j]) };
 }
+const applyStd = (mean, std, v) => v.map((x, j) => (x - mean[j]) / (std[j] || 1));
 
 function cvScores(X, y, opts) {                // LOO(小)/5-fold(大) の交差検証スコア
   const n = X.length, scores = new Array(n).fill(0.5);
@@ -673,9 +676,9 @@ function cvScores(X, y, opts) {                // LOO(小)/5-fold(大) の交差
     const teSet = new Set(te), tr = [];
     for (let i = 0; i < n; i++) if (!teSet.has(i)) tr.push(i);
     if (!tr.length) continue;
-    const sc = standardizer(X, tr);
-    const model = trainLogReg(tr.map(i => sc(X[i])), tr.map(i => y[i]), opts);
-    for (const i of te) scores[i] = predictLogReg(model, sc(X[i]));
+    const st = standardizer(X, tr);
+    const model = trainLogReg(tr.map(i => st.fn(X[i])), tr.map(i => y[i]), opts);
+    for (const i of te) scores[i] = predictLogReg(model, st.fn(X[i]));
   }
   return { scores, cv: loo ? 'Leave-One-Out' : '5-fold' };
 }
@@ -772,6 +775,97 @@ function renderReportDetail(sp) {
     <h3>誤判定レコード（${mis.length}件・クリックで詳細）</h3>
     ${mis.length ? mis.map(o => `<div class="reco mis-item" data-t="${o.m.t}">${o.pred ? '🔴誤検知' : '🟠見逃し'} ／ ${new Date(o.m.t).toLocaleString('ja-JP')} ／ ${seriesName(o.m.sid)} ／ スコア ${o.s.toFixed(2)}${labelText(o.m) ? ' ／ 「' + labelText(o.m) + '」' : ''}</div>`).join('') : '<p class="hint">なし（この空間・しきい値では全て正解）</p>'}`;
   $('repDetail').querySelectorAll('.mis-item').forEach(el => el.onclick = () => openDetail(+el.dataset.t));
+  const rr = $('repReg').value, rsid = $('repSeries').value;
+  $('repDetail').insertAdjacentHTML('beforeend',
+    `<div class="inline" style="margin-top:10px"><button id="repSave" class="mini" data-sp="${sp}">＋ このモデルを保存</button> <span id="repSaveMsg" class="hint"></span></div>`);
+  $('repSave').onclick = () => saveModelFromReport(sp, rr, rsid);
+}
+
+/* ---------- モデルレジストリ（学習済み判定器を保存・録音時に自動判定） ---------- */
+let MODELS = [];
+const REG_LAMBDA = { weak: 0.1, medium: 1, strong: 5 };
+const spaceName = s => ({ yamnet: 'YAMNet', dsp: 'DSP', melcnn: 'MelCNN' }[s] || s);
+const regLabel = r => ({ weak: '弱', medium: '中', strong: '強' }[r] || r);
+const labeledFor = (space, sid) =>
+  MEAS.filter(m => (sid === 'all' || m.sid === sid) && m.emb[space] && (labelOf(m) === 'normal' || labelOf(m) === 'abnormal'));
+
+function buildModel(space, reg, sid, name) {
+  const lambda = REG_LAMBDA[reg] || 1;
+  const ms = labeledFor(space, sid);
+  const nPos = ms.filter(m => labelOf(m) === 'abnormal').length, nNeg = ms.length - nPos;
+  if (ms.length < 6 || nPos < 2 || nNeg < 2) return null;
+  const X = ms.map(m => m.emb[space]), y = ms.map(m => labelOf(m) === 'abnormal' ? 1 : 0);
+  const st = standardizer(X, [...X.keys()]);
+  const full = trainLogReg(X.map(st.fn), y, { lambda, iters: 400, lr: 0.5 });
+  const { scores, cv } = cvScores(X, y, { lambda, iters: 250, lr: 0.5 });
+  const best = bestThreshold(scores, y);
+  const r4 = a => Array.from(a, x => +x.toFixed(4));
+  return {
+    id: Date.now(), name, space, reg, lambda, sid,
+    thr: +best.thr.toFixed(3), w: r4(full.w), b: +full.b.toFixed(4), mean: r4(st.mean), std: r4(st.std),
+    metrics: { auc: auc(scores, y), f1: best.f1, prec: best.prec, rec: best.rec, acc: best.acc, n: ms.length, nPos, nNeg, cv },
+    createdAt: Date.now(), active: true
+  };
+}
+
+async function saveModelFromReport(space, reg, sidSel) {
+  const sid = sidSel === 'all' ? 'all' : +sidSel;
+  const def = `${sid === 'all' ? '全体' : seriesName(sid)} / ${spaceName(space)} ${regLabel(reg)}`;
+  const name = prompt('モデル名', def);
+  if (name === null) return;
+  const model = buildModel(space, reg, sid, name.trim() || def);
+  if (!model) { $('repSaveMsg').textContent = 'ラベル不足で保存できません'; return; }
+  MODELS.push(model);
+  await dbPut('models', model);
+  $('repSaveMsg').textContent = '✅ 保存しました（モデルタブで管理）';
+  setTimeout(() => { const el = $('repSaveMsg'); if (el) el.textContent = ''; }, 2000);
+}
+
+const judgeWithModel = (model, emb) => {
+  const score = predictLogReg({ w: model.w, b: model.b }, applyStd(model.mean, model.std, emb));
+  return { score, pred: score >= model.thr ? 'abnormal' : 'normal' };
+};
+const modelsFor = (sid, emb) => MODELS.filter(m => (m.sid === 'all' || m.sid === sid) && emb[m.space]);
+
+function judgeRecord(sid, emb) {              // 録音直後: 有効な適用可能モデルで判定
+  return modelsFor(sid, emb).filter(m => m.active)
+    .map(m => { const j = judgeWithModel(m, emb[m.space]); return { id: m.id, name: m.name, pred: j.pred, score: +j.score.toFixed(3) }; });
+}
+const judgeHTML = judge => (judge && judge.length)
+  ? '<b>モデル判定:</b> ' + judge.map(j =>
+    `<span class="judge ${j.pred}">${j.pred === 'abnormal' ? '🔴 異常' : '🟢 正常'} ${j.score.toFixed(2)}</span> <small>${j.name}</small>`).join(' ／ ')
+  : '';
+
+function renderModels() {
+  const fmt = v => isNaN(v) ? '—' : v.toFixed(3);
+  $('modelList').innerHTML = MODELS.length
+    ? MODELS.map(m => `<div class="model-card${m.active ? ' on' : ''}" data-id="${m.id}">
+        <div class="inline wrap">
+          <b>${m.name}</b>
+          <span class="chip">${spaceName(m.space)}</span>
+          <span class="chip">正則化:${regLabel(m.reg)}</span>
+          <span class="chip">対象:${m.sid === 'all' ? '全体' : seriesName(m.sid)}</span>
+        </div>
+        <p class="hint">AUC ${fmt(m.metrics.auc)} ／ F1 ${fmt(m.metrics.f1)} ／ 学習${m.metrics.n}件(正常${m.metrics.nNeg}/異常${m.metrics.nPos}) ／ しきい値 ${m.thr.toFixed(2)} ／ ${new Date(m.createdAt).toLocaleDateString('ja-JP')}</p>
+        <div class="inline wrap">
+          <label class="check"><input type="checkbox" class="mdl-active" ${m.active ? 'checked' : ''}> 録音時に使う</label>
+          <button class="mini mdl-retrain">🔁 再学習</button>
+          <button class="mini mdl-rename">✏ 改名</button>
+          <button class="mini danger mdl-del">✕ 削除</button>
+        </div></div>`).join('')
+    : '<p class="hint">まだモデルがありません。「🧪 評価」タブで空間・正則化・対象を選び「＋ このモデルを保存」で作成してください。</p>';
+  $('modelList').querySelectorAll('.model-card').forEach(card => {
+    const id = +card.dataset.id, m = MODELS.find(x => x.id === id);
+    card.querySelector('.mdl-active').onchange = async e => { m.active = e.target.checked; await dbPut('models', m); card.classList.toggle('on', m.active); };
+    card.querySelector('.mdl-rename').onclick = async () => { const n = prompt('モデル名', m.name); if (n) { m.name = n.trim() || m.name; await dbPut('models', m); renderModels(); } };
+    card.querySelector('.mdl-del').onclick = async () => { if (!confirm(`「${m.name}」を削除しますか？`)) return; MODELS = MODELS.filter(x => x.id !== id); await dbDel('models', id); renderModels(); };
+    card.querySelector('.mdl-retrain').onclick = async () => {
+      const nu = buildModel(m.space, m.reg, m.sid, m.name);
+      if (!nu) { alert('現在のラベルでは学習できません（各クラス2件以上・合計6件以上が必要）'); return; }
+      Object.assign(m, { thr: nu.thr, w: nu.w, b: nu.b, mean: nu.mean, std: nu.std, metrics: nu.metrics, createdAt: nu.createdAt });
+      await dbPut('models', m); renderModels();
+    };
+  });
 }
 
 function renderSeries() {
@@ -825,9 +919,10 @@ async function handleSamples(x) {           // x: Float32Array @16kHz
   const sim = { dsp: simTo(prev, 'dsp', emb.dsp) };
   if (emb.yamnet) sim.yamnet = simTo(prev, 'yamnet', emb.yamnet);
   if (emb.melcnn) sim.melcnn = simTo(prev, 'melcnn', emb.melcnn);
+  const judge2 = judgeRecord(sid, emb);      // 保存済みモデルによる自動判定
   const rec = {
     t: Date.now(), sid, rmsDb: +rmsDb.toFixed(1), peak: +peak.toFixed(3),
-    cond: lastCond, emb, top, sim, melAvg, note: null, bands: []
+    cond: lastCond, emb, top, sim, melAvg, note: null, bands: [], judge: judge2
   };
   MEAS.push(rec);
   await dbPut('meas', rec);
@@ -839,6 +934,8 @@ async function handleSamples(x) {           // x: Float32Array @16kHz
     ? '📌 このシリーズで初回の測定です。基準データとして登録しました。'
     : `${judge(ps)}（過去平均との類似度 <b>${ps.toFixed(3)}</b>${sim.yamnet != null && sim.dsp != null ? ` ／ YAMNet ${sim.yamnet.toFixed(3)}・DSP ${sim.dsp.toFixed(3)}` : ''}）`)
     + `<br><small>入力レベル: ${rmsDb.toFixed(1)} dBFS（AGCの影響で絶対値は参考程度）</small>`;
+  $('modelJudge').innerHTML = judge2.length ? judgeHTML(judge2)
+    : (MODELS.length ? '' : '<small class="hint">保存モデルなし — ラベルを貯めて「評価」タブでモデルを作ると、ここに自動判定が出ます</small>');
   $('quality').innerHTML = qualityHints(rec, prev).map(h => `<div class="warn">⚠ ${h}</div>`).join('');
   $('reco').innerHTML = similarNotes(rec).map(o =>
     `<div class="reco" onclick="openDetail(${o.m.t})">💡 シリーズ『${seriesName(o.m.sid)}』の異常ラベル「${labelText(o.m)}」(${new Date(o.m.t).toLocaleDateString('ja-JP')}) に似ています（類似度 ${o.s.toFixed(2)}）</div>`).join('');
@@ -926,6 +1023,7 @@ async function openDetail(t) {
     `類似度: ${ps == null ? '基準' : ps.toFixed(3)}（${simTxt}） ／ `
     + `入力 ${rec.rmsDb} dBFS ／ 録音条件 ${rec.cond ? `AGC:${rec.cond.agc ? 'ON' : 'OFF'} NS:${rec.cond.ns ? 'ON' : 'OFF'} EC:${rec.cond.ec ? 'ON' : 'OFF'}` : '不明'}`
     + (rec.top ? `<br>YAMNet判定: ${rec.top.map(o => `${o.name} (${o.p.toFixed(2)})`).join(' / ')}` : '')
+    + (rec.judge && rec.judge.length ? `<br>${judgeHTML(rec.judge)}` : '')
     + (x ? '' : '<br>⚠ 音声データなし（インポート由来のレコード）— 再生・帯域分析は不可');
   // ラベル: 既存 → （未設定なら）直前のラベル付きレコードから継承
   let lblStatus = rec.label?.status || (rec.note?.text ? 'abnormal' : null);
@@ -1147,10 +1245,11 @@ function showView(v) {
   if (v === 'analyze') showTab(document.querySelector('.tabs .on')?.dataset.tab || 'viz');
 }
 function showTab(t) {
-  ['viz', 'report', 'list'].forEach(k => $('tab-' + k).hidden = k !== t);
+  ['viz', 'report', 'models', 'list'].forEach(k => $('tab-' + k).hidden = k !== t);
   document.querySelectorAll('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   if (t === 'viz') refreshViz();
   if (t === 'report') renderReportSeries();
+  if (t === 'models') renderModels();
 }
 $('navMeasure').onclick = () => showView('measure');
 $('navAnalyze').onclick = () => showView('analyze');
@@ -1298,6 +1397,7 @@ $('repSeries').onchange = () => { if (REPORT) runReport(); };
 (async () => {
   db = await idbOpen();
   MEAS = (await dbAll('meas')).sort((a, b) => a.t - b.t);
+  MODELS = (await dbAll('models')).sort((a, b) => a.createdAt - b.createdAt);
   renderSeries(); refreshAll();
   initYamnet();
   initMelCnn();

@@ -61,6 +61,7 @@
   <section class="card" id="result" hidden>
     <h2>今回の測定結果</h2>
     <div id="similarity"></div>
+    <div id="modelJudge" class="judgebar"></div>
     <div id="quality"></div>
     <div id="reco"></div>
     <div id="topClasses"></div>
@@ -74,6 +75,7 @@
   <nav class="seg tabs">
     <button data-tab="viz" class="mini on">🎨 可視化</button>
     <button data-tab="report" class="mini">🧪 評価</button>
+    <button data-tab="models" class="mini">🧩 モデル</button>
     <button data-tab="list" class="mini">📋 レコード一覧</button>
   </nav>
 
@@ -128,6 +130,12 @@
     <div id="repSummary" class="hint"></div>
     <div id="repTable"></div>
     <div id="repDetail"></div>
+  </section>
+
+  <section class="card" id="tab-models" hidden>
+    <h2>モデル（保存した判定器）</h2>
+    <p class="hint">「🧪 評価」で作ったモデルを保存すると、次の測定でそのシリーズに紐づく有効モデルが自動で正常/異常を判定します。ラベルが増えたら「再学習」で更新できます。</p>
+    <div id="modelList"></div>
   </section>
 
   <section class="card" id="tab-list" hidden>

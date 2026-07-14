@@ -85,6 +85,15 @@ canvas { width: 100%; border-radius: 8px; background: #0d1620; margin-top: 8px; 
 .cm .tp { background: #1f4a2f; } .cm .tn { background: #1f3a4a; }
 .cm .fp { background: #5a3a24; } .cm .fn { background: #5a2a2a; }
 .mis-item { font-size: .82rem; }
+
+.judgebar { margin: 6px 0; font-size: .95rem; }
+.judge { display: inline-block; padding: 1px 8px; border-radius: 99px; font-weight: bold; }
+.judge.normal { background: #1f4a2f; color: #b9f6ca; }
+.judge.abnormal { background: #5a2a2a; color: #ff8a80; }
+.model-card { background: #1f2a37; border-radius: 10px; padding: 10px 12px; margin: 8px 0;
+  border-left: 3px solid #3a4a5c; }
+.model-card.on { border-left-color: #2f9be0; }
+.model-card b { font-size: .95rem; }
 .hint { font-size: .76rem; color: #8aa0b5; margin: 6px 0 0; }
 .scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: .82rem; white-space: nowrap; }
