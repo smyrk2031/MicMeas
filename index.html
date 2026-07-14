@@ -12,7 +12,7 @@
 <body>
 <header>
   <button id="drawerBtn" class="mini">☰ 設定</button>
-  <h1>🔊 OtoScope</h1>
+  <h1>🔊 OtoScope <span id="appVer" class="ver"></span></h1>
   <nav class="seg">
     <button id="navMeasure" class="mini on">🎙 測定</button>
     <button id="navAnalyze" class="mini">📊 レコード解析</button>
@@ -60,6 +60,12 @@
 
   <section class="card" id="result" hidden>
     <h2>今回の測定結果</h2>
+    <div id="verdict" class="verdict" hidden></div>
+    <div class="inline wrap resact" id="resultActions" hidden>
+      <button id="toDetail" class="mini">🔎 詳細分析</button>
+      <button id="toLabel" class="mini">🏷 ラベルを付ける</button>
+    </div>
+    <div id="trendStrip" class="trend"></div>
     <div id="similarity"></div>
     <div id="modelJudge" class="judgebar"></div>
     <div id="quality"></div>
@@ -134,7 +140,12 @@
 
   <section class="card" id="tab-models" hidden>
     <h2>モデル（保存した判定器）</h2>
-    <p class="hint">「🧪 評価」で作ったモデルを保存すると、次の測定でそのシリーズに紐づく有効モデルが自動で正常/異常を判定します。ラベルが増えたら「再学習」で更新できます。</p>
+    <p class="hint">「🧪 評価」または「＋新規モデル」で作った判定器を保存すると、次の測定でそのシリーズに紐づく有効モデルが自動で正常/異常を判定します。ラベルを増やしたら「編集/再学習」で更新できます。</p>
+    <div class="chart-tools">
+      <button id="mdlNew" class="mini">＋ 新規モデル</button>
+      <button id="mdlReinfer" class="mini">🔁 全レコードを再判定</button>
+      <span id="mdlMsg" class="hint"></span>
+    </div>
     <div id="modelList"></div>
   </section>
 
@@ -158,6 +169,7 @@
     <button class="mini" id="dlgClose">✕ 閉じる</button>
   </div>
   <div id="dlgInfo" class="hint"></div>
+  <div id="dlgCompare"></div>
   <div class="inline wrap toolbar">
     <span class="seg">
       <button id="modeView" class="mini on">🔍 表示</button><button id="modeBand" class="mini">🎯 帯域選択</button>
@@ -186,6 +198,32 @@
     <div class="inline"><button id="noteSave" class="mini">💾 ラベル保存</button></div>
   </div>
   <div id="dlgSimilar"></div>
+</dialog>
+
+<dialog id="modelDlg">
+  <div class="dlghead"><b id="modelDlgTitle">モデル</b><button class="mini" id="modelDlgClose">✕ 閉じる</button></div>
+  <label>モデル名 <input id="mdName" type="text" placeholder="例: 工場A-ポンプ / YAMNet 中"></label>
+  <label>埋め込み空間
+    <select id="mdSpace">
+      <option value="yamnet">YAMNet（意味的1024次元）</option>
+      <option value="dsp">DSP（物理的80次元）</option>
+      <option value="melcnn">MelCNN（実験512次元）</option>
+    </select>
+  </label>
+  <label>正則化
+    <select id="mdReg">
+      <option value="weak">弱</option>
+      <option value="medium" selected>中</option>
+      <option value="strong">強</option>
+    </select>
+  </label>
+  <label>学習に使うデータ（対象シリーズ） <select id="mdSeries"></select></label>
+  <div class="inline wrap">
+    <button id="mdPreviewBtn" class="mini">🧪 学習してプレビュー</button>
+    <button id="mdSave" class="mini">💾 保存</button>
+  </div>
+  <div id="mdPreview" class="hint"></div>
+  <p class="hint">現在のラベル（正常/異常）を教師に、埋め込みを凍結してロジスティック回帰を学習します。ラベルを付け替えてから再学習すると内容が更新されます。</p>
 </dialog>
 
 <dialog id="learnDlg">
@@ -248,7 +286,7 @@
   </details>
 </dialog>
 
-<footer>OtoScope PoC — 音声・埋め込み・メモはすべて端末内（IndexedDB）に保持。モデルも同梱配信で外部通信はありません。</footer>
+<footer><span id="footVer"></span> OtoScope PoC — 音声・埋め込み・メモ・モデルはすべて端末内（IndexedDB）に保持。モデルも同梱配信で外部通信はありません。</footer>
 
 <script src="vendor/tf.min.js"></script>
 <script src="app.js"></script>

@@ -94,6 +94,32 @@ canvas { width: 100%; border-radius: 8px; background: #0d1620; margin-top: 8px; 
   border-left: 3px solid #3a4a5c; }
 .model-card.on { border-left-color: #2f9be0; }
 .model-card b { font-size: .95rem; }
+.rep-table td.normal { color: #69f0ae; } .rep-table td.abnormal { color: #ff8a80; }
+
+.ver { font-size: .62rem; color: #7d93a8; font-weight: normal; vertical-align: middle; }
+#footVer { color: #9db3c8; }
+
+/* 判定バナー（測定画面の主役） */
+.verdict { border-radius: 12px; padding: 12px 14px; margin: 6px 0; text-align: center; }
+.verdict .v-main { font-size: 1.5rem; font-weight: bold; }
+.verdict .v-sub { font-size: .82rem; opacity: .92; margin-top: 2px; }
+.verdict .v-warn { font-size: .82rem; margin-top: 4px; color: #ffe082; }
+.verdict.green { background: linear-gradient(135deg, #1f4a2f, #226b3a); }
+.verdict.yellow { background: linear-gradient(135deg, #4a3a24, #7a5a1a); }
+.verdict.red { background: linear-gradient(135deg, #5a2222, #8a2a2a); }
+.verdict.gray { background: #2b3a4a; }
+.resact { margin: 4px 0 2px; }
+
+/* 連続トレンド */
+.trend { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; margin: 4px 0; }
+.trend-label { font-size: .74rem; color: #8aa0b5; margin-right: 4px; }
+.tdot { width: 13px; height: 13px; border-radius: 3px; cursor: pointer; display: inline-block; }
+.tdot.green { background: #43a047; } .tdot.red { background: #e53935; } .tdot.gray { background: #4a5a6a; }
+
+#modelDlg label { margin-bottom: 10px; }
+#modelDlg input, #modelDlg select { padding: 8px; border-radius: 8px; border: 1px solid #3a4a5c;
+  background: #1a2530; color: #e8eef4; font-size: 1rem; }
+#mdPreview { margin-top: 8px; }
 .hint { font-size: .76rem; color: #8aa0b5; margin: 6px 0 0; }
 .scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: .82rem; white-space: nowrap; }

@@ -5,6 +5,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const COLORS = ['#4fc3f7', '#ffb74d', '#81c784', '#e57373', '#ba68c8', '#fff176', '#4db6ac', '#f06292'];
+const APP_VERSION = '0.0.1';
 const SR = 16000, N_FFT = 1024, HOP = 512, N_MEL = 40;
 const MELCNN_T = 96, MELCNN_DIM = 512;      // MelCNN(実験): 固定長メル画像 → 512次元
 const AC = window.AudioContext || window.webkitAudioContext;
@@ -849,7 +850,7 @@ function renderModels() {
         <p class="hint">AUC ${fmt(m.metrics.auc)} ／ F1 ${fmt(m.metrics.f1)} ／ 学習${m.metrics.n}件(正常${m.metrics.nNeg}/異常${m.metrics.nPos}) ／ しきい値 ${m.thr.toFixed(2)} ／ ${new Date(m.createdAt).toLocaleDateString('ja-JP')}</p>
         <div class="inline wrap">
           <label class="check"><input type="checkbox" class="mdl-active" ${m.active ? 'checked' : ''}> 録音時に使う</label>
-          <button class="mini mdl-retrain">🔁 再学習</button>
+          <button class="mini mdl-edit">⚙ 編集/再学習</button>
           <button class="mini mdl-rename">✏ 改名</button>
           <button class="mini danger mdl-del">✕ 削除</button>
         </div></div>`).join('')
@@ -859,13 +860,109 @@ function renderModels() {
     card.querySelector('.mdl-active').onchange = async e => { m.active = e.target.checked; await dbPut('models', m); card.classList.toggle('on', m.active); };
     card.querySelector('.mdl-rename').onclick = async () => { const n = prompt('モデル名', m.name); if (n) { m.name = n.trim() || m.name; await dbPut('models', m); renderModels(); } };
     card.querySelector('.mdl-del').onclick = async () => { if (!confirm(`「${m.name}」を削除しますか？`)) return; MODELS = MODELS.filter(x => x.id !== id); await dbDel('models', id); renderModels(); };
-    card.querySelector('.mdl-retrain').onclick = async () => {
-      const nu = buildModel(m.space, m.reg, m.sid, m.name);
-      if (!nu) { alert('現在のラベルでは学習できません（各クラス2件以上・合計6件以上が必要）'); return; }
-      Object.assign(m, { thr: nu.thr, w: nu.w, b: nu.b, mean: nu.mean, std: nu.std, metrics: nu.metrics, createdAt: nu.createdAt });
-      await dbPut('models', m); renderModels();
-    };
+    card.querySelector('.mdl-edit').onclick = () => openModelEditor(m);
   });
+}
+
+/* ---------- モデル編集/再学習ダイアログ（データセット・空間・正則化を選び直せる） ---------- */
+let EDIT_ID = null, PREVIEW_MODEL = null;
+const previewText = m => `学習件数 ${m.metrics.n}（正常${m.metrics.nNeg}/異常${m.metrics.nPos}） ／ AUC ${isNaN(m.metrics.auc) ? '—' : m.metrics.auc.toFixed(3)} ／ F1 ${m.metrics.f1.toFixed(3)} ／ しきい値 ${m.thr.toFixed(2)}（${m.metrics.cv}）`;
+function fillMdSeries() {
+  $('mdSeries').innerHTML = '<option value="all">すべてのシリーズ</option>'
+    + CFG.series.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+}
+function openModelEditor(model) {
+  EDIT_ID = model ? model.id : null; PREVIEW_MODEL = null;
+  $('modelDlgTitle').textContent = model ? '⚙ モデル編集・再学習' : '＋ 新規モデル';
+  fillMdSeries();
+  $('mdName').value = model ? model.name : '';
+  $('mdSpace').value = model ? model.space : 'yamnet';
+  $('mdReg').value = model ? model.reg : 'medium';
+  $('mdSeries').value = model ? String(model.sid) : 'all';
+  $('mdPreview').innerHTML = model ? '現在: ' + previewText(model) + '<br>設定を変えたら「学習してプレビュー」→「保存」' : '設定を選んで「学習してプレビュー」';
+  $('modelDlg').showModal();
+}
+function mdPreview() {
+  const space = $('mdSpace').value, reg = $('mdReg').value;
+  const sidSel = $('mdSeries').value, sid = sidSel === 'all' ? 'all' : +sidSel;
+  const name = $('mdName').value.trim() || `${sid === 'all' ? '全体' : seriesName(sid)} / ${spaceName(space)} ${regLabel(reg)}`;
+  const m = buildModel(space, reg, sid, name);
+  if (!m) { $('mdPreview').innerHTML = '<span class="warn">この設定・ラベルでは学習できません（各クラス2件以上・合計6件以上が必要）</span>'; PREVIEW_MODEL = null; return; }
+  if (EDIT_ID) m.id = EDIT_ID;
+  PREVIEW_MODEL = m;
+  $('mdPreview').innerHTML = '結果: ' + previewText(m);
+}
+async function mdSaveModel() {
+  if (!PREVIEW_MODEL) { mdPreview(); if (!PREVIEW_MODEL) return; }
+  const m = PREVIEW_MODEL;
+  m.name = $('mdName').value.trim() || m.name;
+  if (EDIT_ID) {
+    const idx = MODELS.findIndex(x => x.id === EDIT_ID);
+    m.id = EDIT_ID; m.active = idx >= 0 ? MODELS[idx].active : true;
+    if (idx >= 0) MODELS[idx] = m; else MODELS.push(m);
+  } else MODELS.push(m);
+  await dbPut('models', m);
+  PREVIEW_MODEL = null;
+  $('modelDlg').close(); renderModels();
+}
+
+async function reinferAll() {                 // 推論専用: 全レコードを現在の有効モデルで再判定
+  if (!MEAS.length) { $('mdlMsg').textContent = 'レコードがありません'; return; }
+  $('mdlMsg').textContent = '再判定中…';
+  let n = 0;
+  for (const m of MEAS) { m.judge = judgeRecord(m.sid, m.emb); await dbPut('meas', m); n++; }
+  $('mdlMsg').textContent = `✅ ${n}件を再判定しました`;
+  refreshAll();
+  setTimeout(() => { const e = $('mdlMsg'); if (e) e.textContent = ''; }, 2500);
+}
+
+/* ---------- 判定バナー・トレンド・モデル比較 ---------- */
+function statusOf(rec) {
+  const lab = labelOf(rec);
+  if (lab) return lab;
+  if (rec.judge && rec.judge.length) return rec.judge.some(j => j.pred === 'abnormal') ? 'abnormal' : 'normal';
+  return null;
+}
+function renderVerdict(rec, ps) {
+  const el = $('verdict'); el.hidden = false;
+  const j = rec.judge || [];
+  if (j.length) {
+    const abn = j.filter(o => o.pred === 'abnormal');
+    const disagree = abn.length > 0 && abn.length < j.length;
+    el.className = 'verdict ' + (abn.length ? 'red' : 'green');
+    el.innerHTML = `<div class="v-main">${abn.length ? '🔴 異常の可能性' : '🟢 正常'}</div>`
+      + `<div class="v-sub">${j.map(o => `${o.pred === 'abnormal' ? '🔴' : '🟢'}${o.name} ${o.score.toFixed(2)}`).join(' ／ ')}</div>`
+      + (disagree ? '<div class="v-warn">⚠ モデル間で判定が割れています（要確認）</div>' : '');
+  } else if (ps == null) {
+    el.className = 'verdict gray';
+    el.innerHTML = '<div class="v-main">📌 初回測定</div><div class="v-sub">基準データとして登録しました</div>';
+  } else {
+    const cls = ps >= 0.90 ? 'green' : ps >= 0.75 ? 'yellow' : 'red';
+    const txt = ps >= 0.90 ? '🟢 いつも通り' : ps >= 0.75 ? '🟡 やや違う' : '🔴 かなり違う';
+    el.className = 'verdict ' + cls;
+    el.innerHTML = `<div class="v-main">${txt}</div><div class="v-sub">過去平均との類似度 ${ps.toFixed(3)} ／ モデル未保存（評価タブで作成すると判定します）</div>`;
+  }
+}
+function renderTrend(sid) {
+  const el = $('trendStrip');
+  const ms = MEAS.filter(m => m.sid === sid).slice(-20);
+  if (ms.length < 2) { el.innerHTML = ''; return; }
+  el.innerHTML = '<span class="trend-label">最近の推移</span>' + ms.map(m => {
+    const s = statusOf(m), c = s === 'abnormal' ? 'red' : s === 'normal' ? 'green' : 'gray';
+    return `<i class="tdot ${c}" data-t="${m.t}" title="${new Date(m.t).toLocaleString('ja-JP')}${s ? '：' + (s === 'abnormal' ? '異常' : '正常') : ''}"></i>`;
+  }).join('');
+  el.querySelectorAll('.tdot').forEach(d => d.onclick = () => openDetail(+d.dataset.t));
+}
+function renderCompare(rec) {
+  const el = $('dlgCompare');
+  const apps = MODELS.filter(m => (m.sid === 'all' || m.sid === rec.sid) && rec.emb[m.space]);
+  if (!apps.length) { el.innerHTML = ''; return; }
+  const rows = apps.map(m => { const r = judgeWithModel(m, rec.emb[m.space]); return { m, ...r }; });
+  const disagree = new Set(rows.map(r => r.pred)).size > 1;
+  el.innerHTML = `<h3>モデル比較${disagree ? ' <span class="v-warn">⚠ 判定が割れています</span>' : ''}</h3>`
+    + `<table class="rep-table"><thead><tr><th>モデル</th><th>空間</th><th>判定</th><th>スコア</th><th>しきい値</th><th>使用</th></tr></thead><tbody>`
+    + rows.map(r => `<tr><td>${r.m.name}</td><td>${spaceName(r.m.space)}</td><td class="${r.pred}">${r.pred === 'abnormal' ? '🔴異常' : '🟢正常'}</td><td>${r.score.toFixed(2)}</td><td>${r.m.thr.toFixed(2)}</td><td>${r.m.active ? '✓' : '—'}</td></tr>`).join('')
+    + '</tbody></table>';
 }
 
 function renderSeries() {
@@ -930,6 +1027,11 @@ async function handleSamples(x) {           // x: Float32Array @16kHz
 
   const ps = primarySim(rec);
   $('result').hidden = false;
+  renderVerdict(rec, ps);
+  renderTrend(sid);
+  $('resultActions').hidden = false;
+  $('toDetail').onclick = () => openDetail(rec.t);
+  $('toLabel').onclick = () => openDetail(rec.t);
   $('similarity').innerHTML = (ps == null
     ? '📌 このシリーズで初回の測定です。基準データとして登録しました。'
     : `${judge(ps)}（過去平均との類似度 <b>${ps.toFixed(3)}</b>${sim.yamnet != null && sim.dsp != null ? ` ／ YAMNet ${sim.yamnet.toFixed(3)}・DSP ${sim.dsp.toFixed(3)}` : ''}）`)
@@ -1038,6 +1140,7 @@ async function openDetail(t) {
   $('recPos').textContent = `${idx + 1} / ${MEAS.length}`;
   $('prevRec').disabled = idx <= 0;
   $('nextRec').disabled = idx >= MEAS.length - 1;
+  renderCompare(rec);
   setMode('view'); renderBands();
   renderSimilar(rec);
   $('detailDlg').showModal();
@@ -1371,7 +1474,7 @@ $('importFile').onchange = async e => {
   CFG = { series: j.series, nextSid: j.nextSid }; saveCfg();
   MEAS = j.meas || [];
   await dbClear('meas'); await dbClear('audio');
-  for (const m of MEAS) await dbPut('meas', m);
+  for (const m of MEAS) { m.judge = judgeRecord(m.sid, m.emb); await dbPut('meas', m); }
   renderSeries(); refreshAll();
 };
 $('clearBtn').onclick = async () => {
@@ -1393,7 +1496,16 @@ $('repRun').onclick = () => {
 $('repReg').onchange = () => { if (REPORT) runReport(); };
 $('repSeries').onchange = () => { if (REPORT) runReport(); };
 
+$('mdlNew').onclick = () => openModelEditor(null);
+$('mdlReinfer').onclick = reinferAll;
+$('mdPreviewBtn').onclick = mdPreview;
+$('mdSave').onclick = mdSaveModel;
+$('modelDlgClose').onclick = () => $('modelDlg').close();
+
 /* ---------- 起動 ---------- */
+$('appVer').textContent = 'v' + APP_VERSION;
+$('footVer').textContent = 'v' + APP_VERSION;
+
 (async () => {
   db = await idbOpen();
   MEAS = (await dbAll('meas')).sort((a, b) => a.t - b.t);

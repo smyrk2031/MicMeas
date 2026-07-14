@@ -1,5 +1,5 @@
 /* ネットワーク優先＋キャッシュフォールバック（オフラインでも起動できるように） */
-const CACHE = 'otoscope-v5';
+const CACHE = 'otoscope-v6';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg',
   'vendor/tf.min.js'];   // モデル本体(models/)は初回読込時にランタイムキャッシュされる
 
