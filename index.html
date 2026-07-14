@@ -73,6 +73,7 @@
 <main id="viewAnalyze" hidden>
   <nav class="seg tabs">
     <button data-tab="viz" class="mini on">🎨 可視化</button>
+    <button data-tab="report" class="mini">🧪 評価</button>
     <button data-tab="list" class="mini">📋 レコード一覧</button>
   </nav>
 
@@ -108,6 +109,25 @@
         <p class="hint">●通常 ◆メモあり ◎最新。点が近い＝似た音。タップでカラーマップと連動選択、ダブルクリックで詳細。ピンチ・ホイール／ドラッグでズーム・パン。</p>
       </div>
     </div>
+  </section>
+
+  <section class="card" id="tab-report" hidden>
+    <h2>成否ラベルの評価レポート（線形プローブ）</h2>
+    <div class="chart-tools">
+      <label class="inlbl">対象 <select id="repSeries"></select></label>
+      <label class="inlbl">正則化
+        <select id="repReg">
+          <option value="weak">弱</option>
+          <option value="medium" selected>中</option>
+          <option value="strong">強</option>
+        </select>
+      </label>
+      <button id="repRun" class="mini">評価を実行</button>
+    </div>
+    <p class="hint">正常/異常ラベル付きレコードだけを使い、埋め込みを凍結したままロジスティック回帰で分離。交差検証で正直な指標を出し、埋め込み空間（YAMNet/DSP/MelCNN）を比較します。</p>
+    <div id="repSummary" class="hint"></div>
+    <div id="repTable"></div>
+    <div id="repDetail"></div>
   </section>
 
   <section class="card" id="tab-list" hidden>

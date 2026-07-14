@@ -633,6 +633,147 @@ function refreshAll() {
   renderLog(); updateStorage();
   refreshViz();
 }
+
+/* ---------- 評価レポート（線形プローブ: 凍結埋め込み＋ロジスティック回帰＋交差検証） ---------- */
+function trainLogReg(X, y, { lambda = 1, iters = 250, lr = 0.5 }) {
+  const n = X.length, d = X[0].length;
+  const w = new Float64Array(d); let b = 0;
+  for (let it = 0; it < iters; it++) {
+    const gw = new Float64Array(d); let gb = 0;
+    for (let i = 0; i < n; i++) {
+      const xi = X[i]; let z = b;
+      for (let j = 0; j < d; j++) z += w[j] * xi[j];
+      const p = 1 / (1 + Math.exp(-z)), e = p - y[i];
+      for (let j = 0; j < d; j++) gw[j] += e * xi[j];
+      gb += e;
+    }
+    for (let j = 0; j < d; j++) w[j] -= lr * (gw[j] / n + lambda * w[j] / n);
+    b -= lr * (gb / n);
+  }
+  return { w, b };
+}
+const predictLogReg = (m, x) => { let z = m.b; for (let j = 0; j < x.length; j++) z += m.w[j] * x[j]; return 1 / (1 + Math.exp(-z)); };
+
+function standardizer(X, idx) {               // 学習foldから列ごとの平均/標準偏差
+  const d = X[0].length, mean = new Float64Array(d), std = new Float64Array(d);
+  for (const i of idx) { const xi = X[i]; for (let j = 0; j < d; j++) mean[j] += xi[j]; }
+  for (let j = 0; j < d; j++) mean[j] /= idx.length;
+  for (const i of idx) { const xi = X[i]; for (let j = 0; j < d; j++) { const dv = xi[j] - mean[j]; std[j] += dv * dv; } }
+  for (let j = 0; j < d; j++) std[j] = Math.sqrt(std[j] / idx.length) || 1;
+  return v => v.map((x, j) => (x - mean[j]) / std[j]);
+}
+
+function cvScores(X, y, opts) {                // LOO(小)/5-fold(大) の交差検証スコア
+  const n = X.length, scores = new Array(n).fill(0.5);
+  const loo = n <= 40;
+  const folds = loo
+    ? X.map((_, i) => [i])
+    : (() => { const f = Array.from({ length: 5 }, () => []); [...X.keys()].sort((a, b) => y[a] - y[b]).forEach((idx, k) => f[k % 5].push(idx)); return f; })();
+  for (const te of folds) {
+    const teSet = new Set(te), tr = [];
+    for (let i = 0; i < n; i++) if (!teSet.has(i)) tr.push(i);
+    if (!tr.length) continue;
+    const sc = standardizer(X, tr);
+    const model = trainLogReg(tr.map(i => sc(X[i])), tr.map(i => y[i]), opts);
+    for (const i of te) scores[i] = predictLogReg(model, sc(X[i]));
+  }
+  return { scores, cv: loo ? 'Leave-One-Out' : '5-fold' };
+}
+
+function auc(scores, y) {                       // Mann-Whitney（タイ平均ランク）
+  const n = scores.length, np = y.reduce((a, v) => a + v, 0), nn = n - np;
+  if (!np || !nn) return NaN;
+  const order = [...Array(n).keys()].sort((a, b) => scores[a] - scores[b]);
+  const ranks = new Array(n); let i = 0;
+  while (i < n) { let j = i; while (j < n && scores[order[j]] === scores[order[i]]) j++; const r = (i + j + 1) / 2; for (let k = i; k < j; k++) ranks[order[k]] = r; i = j; }
+  let sumPos = 0; for (let k = 0; k < n; k++) if (y[k]) sumPos += ranks[k];
+  return (sumPos - np * (np + 1) / 2) / (np * nn);
+}
+
+function confusionAt(scores, y, thr) {
+  let tp = 0, fp = 0, tn = 0, fn = 0;
+  scores.forEach((s, i) => { const pred = s >= thr ? 1 : 0; if (pred && y[i]) tp++; else if (pred && !y[i]) fp++; else if (!pred && y[i]) fn++; else tn++; });
+  const prec = tp + fp ? tp / (tp + fp) : 0, rec = tp + fn ? tp / (tp + fn) : 0;
+  const f1 = prec + rec ? 2 * prec * rec / (prec + rec) : 0, acc = (tp + tn) / (tp + fp + tn + fn || 1);
+  return { thr, tp, fp, tn, fn, prec, rec, f1, acc };
+}
+function bestThreshold(scores, y) {
+  const cand = [...new Set(scores)].sort((a, b) => a - b);
+  let best = confusionAt(scores, y, 0.5);
+  for (const t of cand) { const m = confusionAt(scores, y, t); if (m.f1 > best.f1) best = m; }
+  return best;
+}
+
+let REPORT = null;
+const SPACES = [['yamnet', 'YAMNet'], ['dsp', 'DSP'], ['melcnn', 'MelCNN']];
+
+function renderReportSeries() {
+  const sel = $('repSeries'), cur = sel.value;
+  sel.innerHTML = '<option value="all">すべてのシリーズ</option>'
+    + CFG.series.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+  if (cur) sel.value = cur;
+}
+
+function runReport() {
+  const sidSel = $('repSeries').value, sid = sidSel === 'all' ? 'all' : +sidSel;
+  const lambda = { weak: 0.1, medium: 1, strong: 5 }[$('repReg').value] || 1;
+  const opts = { lambda, iters: 250, lr: 0.5 };
+  const results = [];
+  for (const [sp, name] of SPACES) {
+    const ms = MEAS.filter(m => (sid === 'all' || m.sid === sid) && m.emb[sp] && (labelOf(m) === 'normal' || labelOf(m) === 'abnormal'));
+    const nPos = ms.filter(m => labelOf(m) === 'abnormal').length, nNeg = ms.length - nPos;
+    if (ms.length < 6 || nPos < 2 || nNeg < 2) { results.push({ sp, name, nPos, nNeg, insufficient: true }); continue; }
+    const X = ms.map(m => m.emb[sp]), y = ms.map(m => labelOf(m) === 'abnormal' ? 1 : 0);
+    const { scores, cv } = cvScores(X, y, opts);
+    results.push({ sp, name, ms, scores, y, nPos, nNeg, cv, auc: auc(scores, y), best: bestThreshold(scores, y) });
+  }
+  results.sort((a, b) => (b.auc || -1) - (a.auc || -1));
+  REPORT = { sid, results };
+  renderReport();
+  const first = results.find(r => !r.insufficient);
+  if (first) renderReportDetail(first.sp);
+}
+
+function renderReport() {
+  const ok = REPORT.results.filter(r => !r.insufficient);
+  const pct = v => isNaN(v) ? '—' : (v * 100).toFixed(1) + '%';
+  const f3 = v => isNaN(v) ? '—' : v.toFixed(3);
+  if (!ok.length) {
+    $('repSummary').innerHTML = '<div class="warn">⚠ 評価には各クラス2件以上・合計6件以上の「正常/異常」ラベルが必要です。詳細画面でラベルを付けてください。</div>';
+    $('repTable').innerHTML = ''; $('repDetail').innerHTML = '';
+    return;
+  }
+  $('repSummary').innerHTML = `交差検証: <b>${ok[0].cv}</b> ／ AUCの高い埋め込みほど、このデータで正常・異常が分離できています（行クリックで詳細）。`;
+  $('repTable').innerHTML = `<table class="rep-table">
+    <thead><tr><th>埋め込み</th><th>件数(正常/異常)</th><th>AUC</th><th>F1</th><th>適合率</th><th>再現率</th><th>正解率</th></tr></thead>
+    <tbody>${REPORT.results.map(r => r.insufficient
+    ? `<tr class="dim"><td>${r.name}</td><td>${r.nNeg}/${r.nPos}</td><td colspan="5">データ不足</td></tr>`
+    : `<tr data-sp="${r.sp}"><td><b>${r.name}</b></td><td>${r.nNeg}/${r.nPos}</td><td>${f3(r.auc)}</td><td>${f3(r.best.f1)}</td><td>${pct(r.best.prec)}</td><td>${pct(r.best.rec)}</td><td>${pct(r.best.acc)}</td></tr>`).join('')}
+    </tbody></table>`;
+  $('repTable').querySelectorAll('tr[data-sp]').forEach(tr => tr.onclick = () => renderReportDetail(tr.dataset.sp));
+}
+
+function renderReportDetail(sp) {
+  const r = REPORT.results.find(x => x.sp === sp);
+  if (!r || r.insufficient) { $('repDetail').innerHTML = ''; return; }
+  $('repTable').querySelectorAll('tr[data-sp]').forEach(tr => tr.classList.toggle('best', tr.dataset.sp === sp));
+  const b = r.best, thr = b.thr;
+  const mis = r.ms.map((m, i) => ({ m, s: r.scores[i], y: r.y[i], pred: r.scores[i] >= thr ? 1 : 0 }))
+    .filter(o => o.pred !== o.y).sort((a, z) => Math.abs(z.s - thr) - Math.abs(a.s - thr));
+  const pct = v => (v * 100).toFixed(1) + '%';
+  $('repDetail').innerHTML = `
+    <h3>${r.name} の詳細（しきい値 ${thr.toFixed(2)}・F1最大で自動選択）</h3>
+    <table class="cm">
+      <tr><td></td><td class="hd">予測: 異常</td><td class="hd">予測: 正常</td></tr>
+      <tr><td class="hd">実際: 異常</td><td class="tp">${b.tp}<small>（正しく異常）</small></td><td class="fn">${b.fn}<small>（見逃し）</small></td></tr>
+      <tr><td class="hd">実際: 正常</td><td class="fp">${b.fp}<small>（誤検知）</small></td><td class="tn">${b.tn}<small>（正しく正常）</small></td></tr>
+    </table>
+    <p class="hint">AUC ${isNaN(r.auc) ? '—' : r.auc.toFixed(3)} ／ 適合率 ${pct(b.prec)} ／ 再現率 ${pct(b.rec)} ／ F1 ${b.f1.toFixed(3)}</p>
+    <h3>誤判定レコード（${mis.length}件・クリックで詳細）</h3>
+    ${mis.length ? mis.map(o => `<div class="reco mis-item" data-t="${o.m.t}">${o.pred ? '🔴誤検知' : '🟠見逃し'} ／ ${new Date(o.m.t).toLocaleString('ja-JP')} ／ ${seriesName(o.m.sid)} ／ スコア ${o.s.toFixed(2)}${labelText(o.m) ? ' ／ 「' + labelText(o.m) + '」' : ''}</div>`).join('') : '<p class="hint">なし（この空間・しきい値では全て正解）</p>'}`;
+  $('repDetail').querySelectorAll('.mis-item').forEach(el => el.onclick = () => openDetail(+el.dataset.t));
+}
+
 function renderSeries() {
   $('seriesSel').innerHTML = CFG.series.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
   updateCurChips();
@@ -1006,10 +1147,10 @@ function showView(v) {
   if (v === 'analyze') showTab(document.querySelector('.tabs .on')?.dataset.tab || 'viz');
 }
 function showTab(t) {
-  $('tab-viz').hidden = t !== 'viz';
-  $('tab-list').hidden = t !== 'list';
+  ['viz', 'report', 'list'].forEach(k => $('tab-' + k).hidden = k !== t);
   document.querySelectorAll('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   if (t === 'viz') refreshViz();
+  if (t === 'report') renderReportSeries();
 }
 $('navMeasure').onclick = () => showView('measure');
 $('navAnalyze').onclick = () => showView('analyze');
@@ -1144,6 +1285,14 @@ $('clearBtn').onclick = async () => {
 $('learnBtn').onclick = () => $('learnDlg').showModal();
 $('learnClose').onclick = () => $('learnDlg').close();
 document.querySelectorAll('[name=space]').forEach(r => r.onchange = () => { MAPCAM = { z: 1, ox: 0, oy: 0 }; drawMap(); });
+
+$('repRun').onclick = () => {
+  $('repSummary').textContent = '計算中…';
+  $('repTable').innerHTML = ''; $('repDetail').innerHTML = '';
+  setTimeout(runReport, 30);                 // 先に「計算中」を描画してから実行
+};
+$('repReg').onchange = () => { if (REPORT) runReport(); };
+$('repSeries').onchange = () => { if (REPORT) runReport(); };
 
 /* ---------- 起動 ---------- */
 (async () => {
