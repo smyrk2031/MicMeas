@@ -30,14 +30,29 @@
       <span class="inline">
         <select id="seriesSel"></select>
         <button id="addSeries" class="mini">＋新規</button>
+        <button id="editSeries" class="mini">✏条件</button>
       </span>
     </label>
+    <p class="hint" id="seriesCond"></p>
     <label>録音時間（秒）
       <select id="durSel"><option>3</option><option selected>5</option><option>10</option></select>
     </label>
     <label class="check"><input type="checkbox" id="rawChk" checked>
       生に近い音で録る（AGC等のOFFを要求）</label>
     <p class="hint">実際に適用された録音条件は毎回記録され、同シリーズで前回と違うと警告します。</p>
+  </section>
+  <section>
+    <h2>計測デバイス</h2>
+    <label>デバイス名
+      <span class="inline">
+        <input id="devName" type="text" placeholder="例: Pixel 8 / 現場ノートPC">
+        <button id="devAuto" class="mini" title="ブラウザから推定して入力">自動</button>
+      </span>
+    </label>
+    <label>マイク
+      <input id="devMic" type="text" placeholder="例: 本体内蔵 / USB: Yeti / イヤホン: WF-1000XM5">
+    </label>
+    <p class="hint">各測定に記録され、レコード詳細・エクスポートに残ります。デバイスやマイクが変わると音の特徴も変わるため、切り替え時は更新してください。</p>
   </section>
   <section>
     <h2>データ <span id="storageInfo" class="chip"></span></h2>
@@ -198,6 +213,17 @@
     <div class="inline"><button id="noteSave" class="mini">💾 ラベル保存</button></div>
   </div>
   <div id="dlgSimilar"></div>
+</dialog>
+
+<dialog id="seriesDlg">
+  <div class="dlghead"><b id="seriesDlgTitle">シリーズ</b><button class="mini" id="seriesDlgClose">✕ 閉じる</button></div>
+  <label>シリーズ名 <input id="sfName" type="text" placeholder="例: 工場A-ポンプ #3"></label>
+  <label>どこで測る？（場所） <input id="sfLoc" type="text" placeholder="例: 第2工場 1F 東側"></label>
+  <label>何を測定する？（対象） <input id="sfTarget" type="text" placeholder="例: 給水ポンプ ベアリング部"></label>
+  <label>測定時の位置関係 <input id="sfPos" type="text" placeholder="例: 吐出フランジから30cm・高さ1m・正面"></label>
+  <label>メモ（任意） <textarea id="sfNote" rows="2" placeholder="狙う異常・注意点など"></textarea></label>
+  <div class="inline"><button id="sfSave" class="mini">💾 保存</button></div>
+  <p class="hint">条件は測定の前提として保存され、同じ位置・距離で測るほど比較が安定します。</p>
 </dialog>
 
 <dialog id="modelDlg">

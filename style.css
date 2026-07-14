@@ -120,6 +120,14 @@ canvas { width: 100%; border-radius: 8px; background: #0d1620; margin-top: 8px; 
 #modelDlg input, #modelDlg select { padding: 8px; border-radius: 8px; border: 1px solid #3a4a5c;
   background: #1a2530; color: #e8eef4; font-size: 1rem; }
 #mdPreview { margin-top: 8px; }
+
+#seriesDlg label { margin-bottom: 10px; }
+#seriesDlg input, #seriesDlg textarea { width: 100%; padding: 8px; border-radius: 8px;
+  border: 1px solid #3a4a5c; background: #1a2530; color: #e8eef4; font-size: 1rem; }
+#devName, #devMic { padding: 7px; border-radius: 8px; border: 1px solid #3a4a5c;
+  background: #1a2530; color: #e8eef4; font-size: .95rem; }
+#devName { flex: 1; }
+#seriesCond { margin-top: -4px; }
 .hint { font-size: .76rem; color: #8aa0b5; margin: 6px 0 0; }
 .scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: .82rem; white-space: nowrap; }

@@ -5,7 +5,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const COLORS = ['#4fc3f7', '#ffb74d', '#81c784', '#e57373', '#ba68c8', '#fff176', '#4db6ac', '#f06292'];
-const APP_VERSION = '0.0.1';
+const APP_VERSION = '0.0.2';
 const SR = 16000, N_FFT = 1024, HOP = 512, N_MEL = 40;
 const MELCNN_T = 96, MELCNN_DIM = 512;      // MelCNN(実験): 固定長メル画像 → 512次元
 const AC = window.AudioContext || window.webkitAudioContext;
@@ -13,7 +13,31 @@ const AC = window.AudioContext || window.webkitAudioContext;
 /* ---------- 状態: シリーズはlocalStorage、測定と音声はIndexedDB ---------- */
 let CFG = JSON.parse(localStorage.getItem('otoscope-cfg') || 'null') ||
   { series: [{ id: 1, name: 'デフォルト' }], nextSid: 2 };
+if (!CFG.device) CFG.device = { name: '', mic: '' };   // 旧データ互換
 const saveCfg = () => localStorage.setItem('otoscope-cfg', JSON.stringify(CFG));
+
+function guessDeviceName() {                 // ブラウザからクライアント個体をざっくり推定
+  const ud = navigator.userAgentData;
+  if (ud && ud.platform) {
+    const b = (ud.brands || []).map(x => x.brand).find(n => !/Not.?A.?Brand|Chromium/i.test(n));
+    return ud.platform + (b ? ` (${b})` : '');
+  }
+  const ua = navigator.userAgent;
+  const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android'
+    : /Windows/.test(ua) ? 'Windows PC' : /Mac OS X/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : 'デバイス';
+  const br = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox'
+    : /Safari\//.test(ua) ? 'Safari' : '';
+  return os + (br ? ` (${br})` : '');
+}
+const seriesById = sid => CFG.series.find(s => s.id === sid) || {};
+function seriesCondText(sid) {
+  const s = seriesById(sid), p = [];
+  if (s.location) p.push('📍' + s.location);
+  if (s.target) p.push('🎯' + s.target);
+  if (s.position) p.push('📐' + s.position);
+  if (s.note) p.push('📝' + s.note);
+  return p.join(' ／ ');
+}
 const seriesName = sid => (CFG.series.find(s => s.id === sid) || { name: '?' }).name;
 const seriesColor = sid => COLORS[CFG.series.findIndex(s => s.id === sid) % COLORS.length];
 
@@ -970,8 +994,11 @@ function renderSeries() {
   updateCurChips();
 }
 function updateCurChips() {
-  $('curSeries').textContent = seriesName(+$('seriesSel').value);
+  const sid = +$('seriesSel').value;
+  $('curSeries').textContent = seriesName(sid);
   $('curDur').textContent = $('durSel').value;
+  const cond = seriesCondText(sid);
+  $('seriesCond').textContent = cond || '（条件未設定：「✏条件」で場所・対象・位置関係を登録できます）';
 }
 
 function renderLog() {
@@ -1019,7 +1046,7 @@ async function handleSamples(x) {           // x: Float32Array @16kHz
   const judge2 = judgeRecord(sid, emb);      // 保存済みモデルによる自動判定
   const rec = {
     t: Date.now(), sid, rmsDb: +rmsDb.toFixed(1), peak: +peak.toFixed(3),
-    cond: lastCond, emb, top, sim, melAvg, note: null, bands: [], judge: judge2
+    cond: lastCond, device: { ...CFG.device }, emb, top, sim, melAvg, note: null, bands: [], judge: judge2
   };
   MEAS.push(rec);
   await dbPut('meas', rec);
@@ -1121,9 +1148,14 @@ async function openDetail(t) {
   const ps = primarySim(rec);
   const simTxt = ['yamnet', 'dsp', 'melcnn'].filter(k => rec.sim && rec.sim[k] != null)
     .map(k => `${k === 'yamnet' ? 'YAMNet' : k === 'dsp' ? 'DSP' : 'MelCNN'} ${rec.sim[k].toFixed(3)}`).join(' / ') || '—';
+  const devTxt = rec.device && (rec.device.name || rec.device.mic)
+    ? `📱${rec.device.name || '—'}${rec.device.mic ? ' / 🎤' + rec.device.mic : ''}` : '';
+  const condTxt = seriesCondText(rec.sid);
   $('dlgInfo').innerHTML =
     `類似度: ${ps == null ? '基準' : ps.toFixed(3)}（${simTxt}） ／ `
     + `入力 ${rec.rmsDb} dBFS ／ 録音条件 ${rec.cond ? `AGC:${rec.cond.agc ? 'ON' : 'OFF'} NS:${rec.cond.ns ? 'ON' : 'OFF'} EC:${rec.cond.ec ? 'ON' : 'OFF'}` : '不明'}`
+    + (devTxt ? `<br>${devTxt}` : '')
+    + (condTxt ? `<br>${condTxt}` : '')
     + (rec.top ? `<br>YAMNet判定: ${rec.top.map(o => `${o.name} (${o.p.toFixed(2)})`).join(' / ')}` : '')
     + (rec.judge && rec.judge.length ? `<br>${judgeHTML(rec.judge)}` : '')
     + (x ? '' : '<br>⚠ 音声データなし（インポート由来のレコード）— 再生・帯域分析は不可');
@@ -1455,12 +1487,48 @@ $('seriesSel').onchange = updateCurChips;
 $('durSel').onchange = updateCurChips;
 
 /* ---------- シリーズ・エクスポート・まなび ---------- */
-$('addSeries').onclick = () => {
-  const name = prompt('シリーズ名（例: 工場A-ポンプ, 自宅-電子レンジ）');
-  if (!name) return;
-  CFG.series.push({ id: CFG.nextSid++, name }); saveCfg();
-  renderSeries(); $('seriesSel').value = CFG.nextSid - 1; updateCurChips();
-};
+let SERIES_EDIT_ID = null;
+function openSeriesDialog(sid) {              // sid=null なら新規
+  SERIES_EDIT_ID = sid;
+  const s = sid != null ? seriesById(sid) : {};
+  $('seriesDlgTitle').textContent = sid != null ? '✏ シリーズ条件の編集' : '＋ 新規シリーズ';
+  $('sfName').value = s.name || '';
+  $('sfLoc').value = s.location || '';
+  $('sfTarget').value = s.target || '';
+  $('sfPos').value = s.position || '';
+  $('sfNote').value = s.note || '';
+  $('seriesDlg').showModal();
+  $('sfName').focus();
+}
+function saveSeriesDialog() {
+  const name = $('sfName').value.trim();
+  if (!name) { $('sfName').focus(); return; }
+  const fields = {
+    name, location: $('sfLoc').value.trim(), target: $('sfTarget').value.trim(),
+    position: $('sfPos').value.trim(), note: $('sfNote').value.trim()
+  };
+  if (SERIES_EDIT_ID != null) {
+    Object.assign(seriesById(SERIES_EDIT_ID), fields);
+  } else {
+    const id = CFG.nextSid++;
+    CFG.series.push({ id, ...fields });
+    saveCfg(); renderSeries(); $('seriesSel').value = id;
+  }
+  saveCfg(); renderSeries();
+  if (SERIES_EDIT_ID != null) $('seriesSel').value = SERIES_EDIT_ID;
+  updateCurChips();
+  $('seriesDlg').close();
+}
+$('addSeries').onclick = () => openSeriesDialog(null);
+$('editSeries').onclick = () => openSeriesDialog(+$('seriesSel').value);
+$('sfSave').onclick = saveSeriesDialog;
+$('seriesDlgClose').onclick = () => $('seriesDlg').close();
+
+$('devName').value = CFG.device.name || '';
+$('devMic').value = CFG.device.mic || '';
+$('devName').oninput = () => { CFG.device.name = $('devName').value; saveCfg(); };
+$('devMic').oninput = () => { CFG.device.mic = $('devMic').value; saveCfg(); };
+$('devAuto').onclick = () => { $('devName').value = guessDeviceName(); CFG.device.name = $('devName').value; saveCfg(); };
 $('exportBtn').onclick = () => {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([JSON.stringify({ ...CFG, meas: MEAS })], { type: 'application/json' }));
@@ -1471,15 +1539,16 @@ $('importFile').onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
   if (!confirm('現在のデータをインポート内容で置き換えます（音声はJSONに含まれないため消えます）。よろしいですか？')) return;
   const j = JSON.parse(await f.text());
-  CFG = { series: j.series, nextSid: j.nextSid }; saveCfg();
+  CFG = { series: j.series, nextSid: j.nextSid, device: j.device || { name: '', mic: '' } }; saveCfg();
   MEAS = j.meas || [];
   await dbClear('meas'); await dbClear('audio');
   for (const m of MEAS) { m.judge = judgeRecord(m.sid, m.emb); await dbPut('meas', m); }
+  $('devName').value = CFG.device.name || ''; $('devMic').value = CFG.device.mic || '';
   renderSeries(); refreshAll();
 };
 $('clearBtn').onclick = async () => {
   if (!confirm('全ての測定データ・音声・シリーズを削除します。よろしいですか？')) return;
-  CFG = { series: [{ id: 1, name: 'デフォルト' }], nextSid: 2 }; saveCfg();
+  CFG = { series: [{ id: 1, name: 'デフォルト' }], nextSid: 2, device: CFG.device }; saveCfg();
   MEAS = [];
   await dbClear('meas'); await dbClear('audio');
   renderSeries(); refreshAll(); $('result').hidden = true;
