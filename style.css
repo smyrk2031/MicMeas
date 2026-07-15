@@ -121,6 +121,30 @@ canvas { width: 100%; border-radius: 8px; background: #0d1620; margin-top: 8px; 
   background: #1a2530; color: #e8eef4; font-size: 1rem; }
 #mdPreview { margin-top: 8px; }
 
+.chipline { margin: 6px 0; font-size: .9rem; }
+.chipline .yc { display: inline-block; background: #23303d; border-radius: 99px; padding: 1px 9px;
+  margin: 2px 3px 2px 0; }
+.chipline .yc b { color: #cfe0ee; }
+
+#quickLabel textarea { width: 100%; margin-top: 6px; }
+#qlInherit { background: #2b4a5c; }
+
+/* 波形比較モーダル */
+#compareDlg { max-width: 960px; width: 94vw; }
+#cmpLegend .lg { font-size: 1.05rem; vertical-align: -1px; }
+.lg-base { color: #4fc3f7; } .lg-other { color: #ffb74d; }
+.lg-shared { color: #4cdc82; } .lg-diff { color: #e55a5a; }
+.cmp-card { background: #16212c; border-radius: 10px; padding: 10px; margin: 10px 0;
+  border-left: 3px solid #ffb74d; }
+.cmp-meta { font-size: .88rem; margin-bottom: 6px; }
+.cmp-meta .abn { color: #ff8a80; }
+.cmp-specs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cmp-specs small, .cmp-prof small { color: #8aa0b5; font-size: .74rem; }
+.cmp-specs canvas { width: 100%; height: 120px; display: block; border-radius: 6px; }
+.cmp-prof { margin-top: 8px; }
+.cmp-prof canvas { width: 100%; height: 130px; display: block; border-radius: 6px; }
+.cmp-base-spec canvas { width: 100%; height: 120px; display: block; border-radius: 6px; }
+
 #seriesDlg label { margin-bottom: 10px; }
 #seriesDlg input, #seriesDlg textarea { width: 100%; padding: 8px; border-radius: 8px;
   border: 1px solid #3a4a5c; background: #1a2530; color: #e8eef4; font-size: 1rem; }
@@ -152,8 +176,8 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); }
   border-left: 3px solid #3a4a5c; }
 .labelbox.is-abnormal { border-left-color: #e53935; }
 .labelbox .labellead { font-size: .82rem; color: #9db3c8; }
-#lblNormal.on { background: #43a047; color: #fff; }
-#lblAbnormal.on { background: #e53935; color: #fff; }
+#lblNormal.on, #qlNormal.on { background: #43a047; color: #fff; }
+#lblAbnormal.on, #qlAbnormal.on { background: #e53935; color: #fff; }
 #similarity { font-size: 1.05rem; margin: 6px 0; text-align: left; }
 #topClasses { font-size: .86rem; color: #b8c9d9; margin: 4px 0; text-align: left; }
 #result { text-align: left; }

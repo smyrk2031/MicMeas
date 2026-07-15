@@ -5,7 +5,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const COLORS = ['#4fc3f7', '#ffb74d', '#81c784', '#e57373', '#ba68c8', '#fff176', '#4db6ac', '#f06292'];
-const APP_VERSION = '0.0.2';
+const APP_VERSION = '0.0.3';
 const SR = 16000, N_FFT = 1024, HOP = 512, N_MEL = 40;
 const MELCNN_T = 96, MELCNN_DIM = 512;      // MelCNN(実験): 固定長メル画像 → 512次元
 const AC = window.AudioContext || window.webkitAudioContext;
@@ -277,6 +277,12 @@ function resample(x, sr, target) {
 const cos = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };  // 埋め込みはL2正規化済み
 const judge = s => s >= 0.90 ? '🟢 いつも通り' : s >= 0.75 ? '🟡 やや違う' : '🔴 かなり違う';
 const primarySim = m => m.sim.yamnet != null ? m.sim.yamnet : m.sim.dsp;
+function simExplain(rec) {                   // 「いつも通り」の判断根拠を説明
+  const base = rec.sim.yamnet != null
+    ? 'YAMNetの意味的な音の特徴（1024次元）'
+    : 'DSPの物理的な音の特徴（帯域エネルギー80次元）';
+  return `基準＝同じシリーズの過去測定の平均パターンとの近さ（${base}）。音の大きさではなく音色・スペクトルの形で判定します。1.0に近いほど「いつも通り」。`;
+}
 
 function simTo(prev, model, emb) {          // 同シリーズ過去平均とのコサイン類似度
   const past = prev.filter(m => m.emb[model]);
@@ -1062,15 +1068,20 @@ async function handleSamples(x) {           // x: Float32Array @16kHz
   $('similarity').innerHTML = (ps == null
     ? '📌 このシリーズで初回の測定です。基準データとして登録しました。'
     : `${judge(ps)}（過去平均との類似度 <b>${ps.toFixed(3)}</b>${sim.yamnet != null && sim.dsp != null ? ` ／ YAMNet ${sim.yamnet.toFixed(3)}・DSP ${sim.dsp.toFixed(3)}` : ''}）`)
+    + `<br><small>${simExplain(rec)}</small>`
     + `<br><small>入力レベル: ${rmsDb.toFixed(1)} dBFS（AGCの影響で絶対値は参考程度）</small>`;
   $('modelJudge').innerHTML = judge2.length ? judgeHTML(judge2)
     : (MODELS.length ? '' : '<small class="hint">保存モデルなし — ラベルを貯めて「評価」タブでモデルを作ると、ここに自動判定が出ます</small>');
   $('quality').innerHTML = qualityHints(rec, prev).map(h => `<div class="warn">⚠ ${h}</div>`).join('');
-  $('reco').innerHTML = similarNotes(rec).map(o =>
+  const sims = similarNotes(rec);
+  $('reco').innerHTML = sims.map(o =>
     `<div class="reco" onclick="openDetail(${o.m.t})">💡 シリーズ『${seriesName(o.m.sid)}』の異常ラベル「${labelText(o.m)}」(${new Date(o.m.t).toLocaleDateString('ja-JP')}) に似ています（類似度 ${o.s.toFixed(2)}）</div>`).join('');
+  $('recoCompare').hidden = !sims.length;
+  $('recoCompare').onclick = () => openCompare(rec.t);
   $('topClasses').innerHTML = top
-    ? 'YAMNetの音クラス判定: ' + top.map(t => `<b>${t.name}</b> (${t.p.toFixed(2)})`).join(' / ')
+    ? '🔎 YAMNet音クラス（参考）: ' + top.map(t => `<span class="yc"><b>${t.name}</b> ${(t.p * 100).toFixed(0)}%</span>`).join('')
     : '';
+  setQuickLabel(rec, prev);
   drawWave(x);
   const sc = $('specCv'); sc.width = sc.clientWidth;
   renderSpec(sc.getContext('2d'), sc.width, sc.height, frames, 0, frames.length, { axes: true });
@@ -1187,6 +1198,7 @@ function renderSimilar(rec) {
       `<div class="reco" data-t="${o.m.t}">『${seriesName(o.m.sid)}』${new Date(o.m.t).toLocaleDateString('ja-JP')}「${labelText(o.m)}」（類似度 ${o.s.toFixed(2)}）</div>`).join('')
     : '';
   $('dlgSimilar').querySelectorAll('[data-t]').forEach(el => el.onclick = () => openDetail(+el.dataset.t));
+  $('simCompare').hidden = !sims.length;
 }
 
 /* ---------- ラベル付与（正常/異常＋テキスト）・前後レコードナビ ---------- */
@@ -1221,6 +1233,102 @@ async function gotoRec(dir) {
   refreshAll();
   openDetail(MEAS[ni].t);
 }
+
+/* ---------- その場ラベル（測定直後・詳細を開かずに正常/異常＋メモ） ---------- */
+let QL_STATUS = null, QL_REC = null;
+function updateQlButtons() {
+  $('qlNormal').classList.toggle('on', QL_STATUS === 'normal');
+  $('qlAbnormal').classList.toggle('on', QL_STATUS === 'abnormal');
+  $('quickLabel').classList.toggle('is-abnormal', QL_STATUS === 'abnormal');
+}
+function setQuickLabel(rec, prev) {
+  QL_REC = rec;
+  QL_STATUS = labelOf(rec);
+  $('qlText').value = labelText(rec);
+  $('qlMsg').textContent = '';
+  $('quickLabel').hidden = false;
+  updateQlButtons();
+  const last = prev && prev.length ? prev[prev.length - 1] : null;   // 同シリーズの前回
+  const btn = $('qlInherit');
+  if (!labelOf(rec) && last && labelOf(last) && rec.t - last.t <= 5 * 60 * 1000) {
+    const st = labelOf(last), tx = labelText(last);
+    btn.hidden = false;
+    btn.textContent = `↩ 前回と同じ（${st === 'abnormal' ? '🔴異常' : '🟢正常'}${tx ? '「' + tx + '」' : ''}）を適用`;
+    btn.onclick = () => { QL_STATUS = st; $('qlText').value = tx; updateQlButtons(); saveQuickLabel(); };
+  } else btn.hidden = true;
+}
+async function saveQuickLabel() {
+  if (!QL_REC) return;
+  const text = $('qlText').value.trim();
+  QL_REC.label = QL_STATUS ? { status: QL_STATUS, text } : (text ? { status: 'abnormal', text } : null);
+  if (QL_REC.label) QL_REC.note = null;
+  await dbPut('meas', QL_REC);
+  $('qlMsg').textContent = '✅ 保存しました';
+  setTimeout(() => { if ($('qlMsg')) $('qlMsg').textContent = ''; }, 2000);
+  renderTrend(QL_REC.sid); refreshAll();
+}
+
+/* ---------- 波形比較（今回 vs 似ているレコードを複数、類似/相違帯域をハイライト） ---------- */
+const bandXHz = (hz, W) => ((mel(hz) - MEL0) / (MEL1 - MEL0)) * W;
+function drawProfile(cv, base, other) {      // base/other: 40帯域 log-mel平均
+  const c = cv.getContext('2d'); const W = cv.width = cv.clientWidth || 600, H = cv.height = 130;
+  c.fillStyle = '#0d1620'; c.fillRect(0, 0, W, H);
+  const z = a => { const m = a.reduce((s, v) => s + v, 0) / a.length; const sd = Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / a.length) || 1; return a.map(v => (v - m) / sd); };
+  const zb = z(base), zo = z(other), N = base.length, bw = W / N;
+  for (let i = 0; i < N; i++) {              // 帯域ごとに 似/違 をハイライト
+    if (zb[i] > 0.4 && zo[i] > 0.4) { c.fillStyle = 'rgba(76,220,130,.22)'; c.fillRect(i * bw, 0, bw, H); }
+    else if (Math.abs(zb[i] - zo[i]) > 1.2) { c.fillStyle = 'rgba(229,90,90,.15)'; c.fillRect(i * bw, 0, bw, H); }
+  }
+  const y = v => H * (1 - (Math.max(-2.5, Math.min(2.5, v)) + 2.5) / 5);
+  const line = (zz, col) => { c.strokeStyle = col; c.lineWidth = 2; c.beginPath(); zz.forEach((v, i) => c[i ? 'lineTo' : 'moveTo']((i + 0.5) * bw, y(v))); c.stroke(); };
+  line(zb, '#4fc3f7'); line(zo, '#ffb74d');
+  c.font = '9px sans-serif'; c.fillStyle = '#8aa0b5'; c.textBaseline = 'bottom';
+  for (const hz of HZ_TICKS) {
+    const x = bandXHz(hz, W); if (x < 0 || x > W) continue;
+    c.strokeStyle = 'rgba(255,255,255,.15)'; c.beginPath(); c.moveTo(x, 0); c.lineTo(x, H); c.stroke();
+    c.fillText(hzLabel(hz), Math.min(x + 2, W - 16), H - 2);
+  }
+}
+async function specFramesOf(t) {             // 音声を読み出してメルフレームへ（無ければnull）
+  const a = await dbGet('audio', t);
+  if (!a) return null;
+  return melSpec(Float32Array.from(new Int16Array(a.pcm), v => v / 32767));
+}
+async function openCompare(baseT) {
+  const base = MEAS.find(m => m.t === baseT);
+  const matches = similarNotes(base);
+  const body = $('cmpBody');
+  if (!matches.length) { body.innerHTML = '<p class="hint">比較できる似たレコードがありません。</p>'; $('compareDlg').showModal(); return; }
+  body.innerHTML = `<div class="cmp-base-spec"><small>今回の測定（${new Date(base.t).toLocaleString('ja-JP')} ／ ${seriesName(base.sid)}）</small><canvas id="cmpBaseSpec"></canvas></div>`
+    + matches.map((o, i) => {
+      const st = labelOf(o.m);
+      return `<div class="cmp-card">
+        <div class="cmp-meta">類似度 <b>${o.s.toFixed(2)}</b> ／ 『${seriesName(o.m.sid)}』 ${new Date(o.m.t).toLocaleString('ja-JP')} ／ <span class="${st === 'abnormal' ? 'abn' : ''}">${st === 'abnormal' ? '🔴異常' : st === 'normal' ? '🟢正常' : '—'}</span>${labelText(o.m) ? '「' + labelText(o.m) + '」' : ''}</div>
+        <div class="cmp-specs">
+          <div><small>今回</small><canvas class="js-base" data-i="${i}"></canvas></div>
+          <div><small>類似レコード</small><canvas class="js-other" data-i="${i}"></canvas></div>
+        </div>
+        <div class="cmp-prof"><small>周波数プロファイル比較（横軸=周波数）</small><canvas class="js-prof" data-i="${i}"></canvas></div>
+      </div>`;
+    }).join('');
+  $('compareDlg').showModal();
+  const baseFrames = await specFramesOf(base.t);
+  const bc = $('cmpBaseSpec'); bc.width = bc.clientWidth; bc.height = 120;
+  if (baseFrames) renderSpec(bc.getContext('2d'), bc.width, bc.height, baseFrames, 0, baseFrames.length, { axes: true });
+  else { const c = bc.getContext('2d'); c.fillStyle = '#0d1620'; c.fillRect(0, 0, bc.width, bc.height); c.fillStyle = '#8aa0b5'; c.font = '12px sans-serif'; c.fillText('音声データなし', 10, 20); }
+  for (let i = 0; i < matches.length; i++) {
+    const o = matches[i];
+    const bcv = body.querySelector(`.js-base[data-i="${i}"]`); bcv.width = bcv.clientWidth; bcv.height = 120;
+    if (baseFrames) renderSpec(bcv.getContext('2d'), bcv.width, bcv.height, baseFrames, 0, baseFrames.length, { axes: true });
+    const ocv = body.querySelector(`.js-other[data-i="${i}"]`); ocv.width = ocv.clientWidth; ocv.height = 120;
+    const of = await specFramesOf(o.m.t);
+    if (of) renderSpec(ocv.getContext('2d'), ocv.width, ocv.height, of, 0, of.length, { axes: true });
+    else { const c = ocv.getContext('2d'); c.fillStyle = '#0d1620'; c.fillRect(0, 0, ocv.width, ocv.height); c.fillStyle = '#8aa0b5'; c.font = '12px sans-serif'; c.fillText('音声データなし（プロファイルのみ）', 10, 20); }
+    const pcv = body.querySelector(`.js-prof[data-i="${i}"]`);
+    if (base.melAvg && o.m.melAvg) drawProfile(pcv, base.melAvg, o.m.melAvg);
+  }
+}
+window.openCompare = openCompare;
 
 function redraw() {
   const cv = $('bigSpec');
@@ -1355,6 +1463,11 @@ $('playMute').onclick = () => playToggle('mute');
 $('playOnly').onclick = () => playToggle('only');
 $('lblNormal').onclick = () => setLabelStatus('normal');
 $('lblAbnormal').onclick = () => setLabelStatus('abnormal');
+$('qlNormal').onclick = () => { QL_STATUS = QL_STATUS === 'normal' ? null : 'normal'; updateQlButtons(); };
+$('qlAbnormal').onclick = () => { QL_STATUS = QL_STATUS === 'abnormal' ? null : 'abnormal'; updateQlButtons(); };
+$('qlSave').onclick = saveQuickLabel;
+$('simCompare').onclick = () => { if (D) openCompare(D.rec.t); };
+$('compareClose').onclick = () => $('compareDlg').close();
 $('prevRec').onclick = () => gotoRec(-1);
 $('nextRec').onclick = () => gotoRec(1);
 $('noteSave').onclick = async () => {

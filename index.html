@@ -80,12 +80,26 @@
       <button id="toDetail" class="mini">🔎 詳細分析</button>
       <button id="toLabel" class="mini">🏷 ラベルを付ける</button>
     </div>
+    <div id="quickLabel" class="labelbox" hidden>
+      <div class="inline wrap">
+        <span class="labellead">その場ラベル</span>
+        <span class="seg">
+          <button id="qlNormal" class="mini">🟢 正常</button>
+          <button id="qlAbnormal" class="mini">🔴 異常</button>
+        </span>
+        <button id="qlInherit" class="mini" hidden></button>
+        <span id="qlMsg" class="hint"></span>
+      </div>
+      <textarea id="qlText" rows="1" placeholder="異常の内容・メモ（任意）"></textarea>
+      <div class="inline"><button id="qlSave" class="mini">💾 ラベル保存</button></div>
+    </div>
+    <div id="topClasses" class="chipline"></div>
     <div id="trendStrip" class="trend"></div>
     <div id="similarity"></div>
     <div id="modelJudge" class="judgebar"></div>
     <div id="quality"></div>
     <div id="reco"></div>
-    <div id="topClasses"></div>
+    <div class="inline"><button id="recoCompare" class="mini" hidden>🔬 似ている波形と比較する</button></div>
     <canvas id="waveCv" height="70"></canvas>
     <canvas id="specCv" height="110"></canvas>
     <button id="openLatest" class="mini">🔎 詳細分析（再生・帯域・メモ）</button>
@@ -213,6 +227,16 @@
     <div class="inline"><button id="noteSave" class="mini">💾 ラベル保存</button></div>
   </div>
   <div id="dlgSimilar"></div>
+  <div class="inline"><button id="simCompare" class="mini" hidden>🔬 似ている波形と比較する</button></div>
+</dialog>
+
+<dialog id="compareDlg">
+  <div class="dlghead"><b>🔬 波形の比較</b><button class="mini" id="compareClose">✕ 閉じる</button></div>
+  <p class="hint" id="cmpLegend">
+    <span class="lg lg-base">■</span> 今回　<span class="lg lg-other">■</span> 類似レコード　／　
+    <span class="lg lg-shared">■</span> 似ている帯域（両方で強い）　<span class="lg lg-diff">■</span> 大きく違う帯域
+  </p>
+  <div id="cmpBody"></div>
 </dialog>
 
 <dialog id="seriesDlg">
