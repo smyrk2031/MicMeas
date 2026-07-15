@@ -250,6 +250,17 @@
   <p class="hint">条件は測定の前提として保存され、同じ位置・距離で測るほど比較が安定します。</p>
 </dialog>
 
+<dialog id="mapDlg">
+  <div class="dlghead"><b id="mapDlgTitle">学習データマップ</b><button class="mini" id="mapDlgClose">✕ 閉じる</button></div>
+  <div id="mapDlgInfo" class="hint"></div>
+  <div class="inline wrap" id="mapDlgCtl">
+    <span class="seg"><button id="mapDim2" class="mini on">2D</button><button id="mapDim3" class="mini">3D</button></span>
+    <span id="mapDlgFilters" class="inline wrap"></span>
+  </div>
+  <canvas id="mapDlgCv"></canvas>
+  <p class="hint" id="mapDlgHint">○=正常 ◆=異常 ／ 塗り色=シリーズ ／ 緑枠=モデル正解・赤枠=誤判定。3Dはドラッグで回転。チェックで絞り込み。</p>
+</dialog>
+
 <dialog id="modelDlg">
   <div class="dlghead"><b id="modelDlgTitle">モデル</b><button class="mini" id="modelDlgClose">✕ 閉じる</button></div>
   <label>モデル名 <input id="mdName" type="text" placeholder="例: 工場A-ポンプ / YAMNet 中"></label>
