@@ -150,8 +150,9 @@
 
   <section class="card" id="tab-report" hidden>
     <h2>成否ラベルの評価レポート（線形プローブ）</h2>
-    <div class="chart-tools">
-      <label class="inlbl">対象 <select id="repSeries"></select></label>
+    <div class="rep-ctl">
+      <div class="inlbl">対象シリーズ（複数選択可）</div>
+      <div id="repSeriesBox" class="ser-checks"></div>
       <label class="inlbl">正則化
         <select id="repReg">
           <option value="weak">弱</option>
@@ -159,9 +160,10 @@
           <option value="strong">強</option>
         </select>
       </label>
+      <div id="repAugBox"></div>
       <button id="repRun" class="mini">評価を実行</button>
     </div>
-    <p class="hint">正常/異常ラベル付きレコードだけを使い、埋め込みを凍結したままロジスティック回帰で分離。交差検証で正直な指標を出し、埋め込み空間（YAMNet/DSP/MelCNN）を比較します。</p>
+    <p class="hint">正常/異常ラベル付きレコードを教師に、埋め込みを凍結してロジスティック回帰で分離。データ拡張は<b>生波形</b>に施して埋め込み直します。交差検証は<b>録音単位でグループ分割</b>し（同じ録音の拡張が学習とテストに跨らない）、テストは<b>元データのみ</b>で評価するので指標が水増しされません。</p>
     <div id="repSummary" class="hint"></div>
     <div id="repTable"></div>
     <div id="repDetail"></div>
@@ -278,7 +280,9 @@
       <option value="strong">強</option>
     </select>
   </label>
-  <label>学習に使うデータ（対象シリーズ） <select id="mdSeries"></select></label>
+  <div class="inlbl">学習に使うデータ（対象シリーズ・複数選択可）</div>
+  <div id="mdSeriesBox" class="ser-checks"></div>
+  <div id="mdAugBox"></div>
   <div class="inline wrap">
     <button id="mdPreviewBtn" class="mini">🧪 学習してプレビュー</button>
     <button id="mdSave" class="mini">💾 保存</button>

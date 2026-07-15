@@ -5,7 +5,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const COLORS = ['#4fc3f7', '#ffb74d', '#81c784', '#e57373', '#ba68c8', '#fff176', '#4db6ac', '#f06292'];
-const APP_VERSION = '0.0.4';
+const APP_VERSION = '0.0.5';
 const SR = 16000, N_FFT = 1024, HOP = 512, N_MEL = 40;
 const MELCNN_T = 96, MELCNN_DIM = 512;      // MelCNN(実験): 固定長メル画像 → 512次元
 const AC = window.AudioContext || window.webkitAudioContext;
@@ -698,23 +698,6 @@ function standardizer(X, idx) {               // 学習foldから列ごとの平
 }
 const applyStd = (mean, std, v) => v.map((x, j) => (x - mean[j]) / (std[j] || 1));
 
-function cvScores(X, y, opts) {                // LOO(小)/5-fold(大) の交差検証スコア
-  const n = X.length, scores = new Array(n).fill(0.5);
-  const loo = n <= 40;
-  const folds = loo
-    ? X.map((_, i) => [i])
-    : (() => { const f = Array.from({ length: 5 }, () => []); [...X.keys()].sort((a, b) => y[a] - y[b]).forEach((idx, k) => f[k % 5].push(idx)); return f; })();
-  for (const te of folds) {
-    const teSet = new Set(te), tr = [];
-    for (let i = 0; i < n; i++) if (!teSet.has(i)) tr.push(i);
-    if (!tr.length) continue;
-    const st = standardizer(X, tr);
-    const model = trainLogReg(tr.map(i => st.fn(X[i])), tr.map(i => y[i]), opts);
-    for (const i of te) scores[i] = predictLogReg(model, st.fn(X[i]));
-  }
-  return { scores, cv: loo ? 'Leave-One-Out' : '5-fold' };
-}
-
 function auc(scores, y) {                       // Mann-Whitney（タイ平均ランク）
   const n = scores.length, np = y.reduce((a, v) => a + v, 0), nn = n - np;
   if (!np || !nn) return NaN;
@@ -742,28 +725,59 @@ function bestThreshold(scores, y) {
 let REPORT = null;
 const SPACES = [['yamnet', 'YAMNet'], ['dsp', 'DSP'], ['melcnn', 'MelCNN']];
 
-function renderReportSeries() {
-  const sel = $('repSeries'), cur = sel.value;
-  sel.innerHTML = '<option value="all">すべてのシリーズ</option>'
-    + CFG.series.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
-  if (cur) sel.value = cur;
+/* 対象シリーズ（複数選択）とデータ拡張のUIビルダー（評価タブとモデル編集で共用） */
+function seriesChecksHTML(prefix, selected) {
+  const all = selected === 'all' || selected == null;
+  const set = new Set(all ? [] : (Array.isArray(selected) ? selected : [selected]));
+  return `<label class="check"><input type="checkbox" id="${prefix}SerAll" ${all ? 'checked' : ''}><b>すべて</b></label>`
+    + CFG.series.map(s => `<label class="check"><input type="checkbox" class="${prefix}-ser" data-sid="${s.id}" ${(!all && set.has(s.id)) ? 'checked' : ''}><i class="dot" style="background:${seriesColor(s.id)}"></i>${s.name}</label>`).join('');
+}
+function wireSeriesChecks(prefix) {
+  $(`${prefix}SerAll`).onchange = e => { if (e.target.checked) document.querySelectorAll(`.${prefix}-ser`).forEach(c => c.checked = false); };
+  document.querySelectorAll(`.${prefix}-ser`).forEach(c => c.onchange = () => { if (c.checked) $(`${prefix}SerAll`).checked = false; });
+}
+function readSeriesChecks(prefix) {
+  if ($(`${prefix}SerAll`).checked) return 'all';
+  const arr = [...document.querySelectorAll(`.${prefix}-ser`)].filter(c => c.checked).map(c => +c.dataset.sid);
+  return arr.length ? arr : 'all';
+}
+function augControlsHTML(prefix, aug) {
+  const a = aug || { count: 0, mag: 0.2, gain: true, noise: true, shift: true };
+  const opt = (v, cur, lbl) => `<option value="${v}" ${+cur === +v ? 'selected' : ''}>${lbl}</option>`;
+  return `<div class="aug-box"><span class="labellead">データ拡張（生波形）</span>
+    <label class="inlbl">数/1件<select id="${prefix}AugCount">${[0, 2, 4, 8, 16].map(v => opt(v, a.count, v === 0 ? 'なし' : v)).join('')}</select></label>
+    <label class="inlbl">強さ<select id="${prefix}AugMag">${opt(0.1, a.mag, '小')}${opt(0.2, a.mag, '中')}${opt(0.35, a.mag, '大')}</select></label>
+    <label class="check"><input type="checkbox" id="${prefix}AugGain" ${a.gain ? 'checked' : ''}>振幅</label>
+    <label class="check"><input type="checkbox" id="${prefix}AugNoise" ${a.noise ? 'checked' : ''}>ノイズ</label>
+    <label class="check"><input type="checkbox" id="${prefix}AugShift" ${a.shift ? 'checked' : ''}>時間シフト</label></div>`;
+}
+const readAug = prefix => ({
+  count: +$(`${prefix}AugCount`).value, mag: +$(`${prefix}AugMag`).value,
+  gain: $(`${prefix}AugGain`).checked, noise: $(`${prefix}AugNoise`).checked, shift: $(`${prefix}AugShift`).checked
+});
+function fillReportControls() {
+  $('repSeriesBox').innerHTML = seriesChecksHTML('rep', REPORT ? REPORT.sids : 'all');
+  wireSeriesChecks('rep');
+  if (!$('repAugBox').children.length) $('repAugBox').innerHTML = augControlsHTML('rep', REPORT ? REPORT.aug : null);
 }
 
-function runReport() {
-  const sidSel = $('repSeries').value, sid = sidSel === 'all' ? 'all' : +sidSel;
-  const lambda = { weak: 0.1, medium: 1, strong: 5 }[$('repReg').value] || 1;
-  const opts = { lambda, iters: 250, lr: 0.5 };
+async function runReport() {
+  const sids = readSeriesChecks('rep'), reg = $('repReg').value, aug = readAug('rep');
+  const opts = { lambda: REG_LAMBDA[reg] || 1, iters: 250, lr: 0.5 };
   const results = [];
   for (const [sp, name] of SPACES) {
-    const ms = MEAS.filter(m => (sid === 'all' || m.sid === sid) && m.emb[sp] && (labelOf(m) === 'normal' || labelOf(m) === 'abnormal'));
-    const nPos = ms.filter(m => labelOf(m) === 'abnormal').length, nNeg = ms.length - nPos;
-    if (ms.length < 6 || nPos < 2 || nNeg < 2) { results.push({ sp, name, nPos, nNeg, insufficient: true }); continue; }
-    const X = ms.map(m => m.emb[sp]), y = ms.map(m => labelOf(m) === 'abnormal' ? 1 : 0);
-    const { scores, cv } = cvScores(X, y, opts);
-    results.push({ sp, name, ms, scores, y, nPos, nNeg, cv, auc: auc(scores, y), best: bestThreshold(scores, y) });
+    $('repSummary').innerHTML = `計算中… <b>${name}</b>${aug.count > 0 ? '（生波形を拡張して埋め込み中）' : ''}`;
+    await new Promise(r => setTimeout(r, 0));      // 進捗描画を挟む
+    const { ms, groups } = await buildDataset(sp, sids, aug);
+    const nPos = groups.filter(g => g.y === 1).length, nNeg = groups.length - nPos;
+    if (groups.length < 6 || nPos < 2 || nNeg < 2) { results.push({ sp, name, nPos, nNeg, insufficient: true }); continue; }
+    const cvr = cvScoresGrouped(groups, opts);
+    const best = bestThreshold(cvr.scores, cvr.yTest);
+    const nAug = groups.reduce((s, g) => s + g.augs.length, 0);
+    results.push({ sp, name, ms, scores: cvr.scores, y: cvr.yTest, nPos, nNeg, nAug, cv: cvr.cv, auc: auc(cvr.scores, cvr.yTest), best });
   }
   results.sort((a, b) => (b.auc || -1) - (a.auc || -1));
-  REPORT = { sid, results };
+  REPORT = { sids, reg, aug, results };
   renderReport();
   const first = results.find(r => !r.insufficient);
   if (first) renderReportDetail(first.sp);
@@ -778,7 +792,11 @@ function renderReport() {
     $('repTable').innerHTML = ''; $('repDetail').innerHTML = '';
     return;
   }
-  $('repSummary').innerHTML = `交差検証: <b>${ok[0].cv}</b> ／ AUCの高い埋め込みほど、このデータで正常・異常が分離できています（行クリックで詳細）。`;
+  const aug = REPORT.aug;
+  const augTxt = aug && aug.count > 0
+    ? `データ拡張 ×${aug.count}（${[aug.gain && '振幅', aug.noise && 'ノイズ', aug.shift && 'シフト'].filter(Boolean).join('・') || 'なし'}・強さ${aug.mag}）`
+    : 'データ拡張なし';
+  $('repSummary').innerHTML = `交差検証: <b>${ok[0].cv}</b> ／ ${augTxt} ／ テストは元データのみで評価。AUCの高い埋め込みほど正常・異常が分離できています（行クリックで詳細）。`;
   $('repTable').innerHTML = `<table class="rep-table">
     <thead><tr><th>埋め込み</th><th>件数(正常/異常)</th><th>AUC</th><th>F1</th><th>適合率</th><th>再現率</th><th>正解率</th></tr></thead>
     <tbody>${REPORT.results.map(r => r.insufficient
@@ -807,10 +825,9 @@ function renderReportDetail(sp) {
     <h3>誤判定レコード（${mis.length}件・クリックで詳細）</h3>
     ${mis.length ? mis.map(o => `<div class="reco mis-item" data-t="${o.m.t}">${o.pred ? '🔴誤検知' : '🟠見逃し'} ／ ${new Date(o.m.t).toLocaleString('ja-JP')} ／ ${seriesName(o.m.sid)} ／ スコア ${o.s.toFixed(2)}${labelText(o.m) ? ' ／ 「' + labelText(o.m) + '」' : ''}</div>`).join('') : '<p class="hint">なし（この空間・しきい値では全て正解）</p>'}`;
   $('repDetail').querySelectorAll('.mis-item').forEach(el => el.onclick = () => openDetail(+el.dataset.t));
-  const rr = $('repReg').value, rsid = $('repSeries').value;
   $('repDetail').insertAdjacentHTML('beforeend',
-    `<div class="inline" style="margin-top:10px"><button id="repSave" class="mini" data-sp="${sp}">＋ このモデルを保存</button> <span id="repSaveMsg" class="hint"></span></div>`);
-  $('repSave').onclick = () => saveModelFromReport(sp, rr, rsid);
+    `<div class="inline" style="margin-top:10px"><button id="repSave" class="mini">＋ このモデルを保存</button> <span id="repSaveMsg" class="hint"></span></div>`);
+  $('repSave').onclick = () => saveModelFromReport(sp);
 }
 
 /* ---------- モデルレジストリ（学習済み判定器を保存・録音時に自動判定） ---------- */
@@ -818,34 +835,97 @@ let MODELS = [];
 const REG_LAMBDA = { weak: 0.1, medium: 1, strong: 5 };
 const spaceName = s => ({ yamnet: 'YAMNet', dsp: 'DSP', melcnn: 'MelCNN' }[s] || s);
 const regLabel = r => ({ weak: '弱', medium: '中', strong: '強' }[r] || r);
-const labeledFor = (space, sid) =>
-  MEAS.filter(m => (sid === 'all' || m.sid === sid) && m.emb[space] && (labelOf(m) === 'normal' || labelOf(m) === 'abnormal'));
+const sidMatch = (modelSid, recSid) => modelSid === 'all' || (Array.isArray(modelSid) ? modelSid.includes(recSid) : modelSid === recSid);
+function sidLabel(sid) {
+  if (sid === 'all') return '全体';
+  const arr = Array.isArray(sid) ? sid : [sid];
+  return arr.length <= 2 ? arr.map(seriesName).join('・') : `${arr.length}系列`;
+}
+const labeledFor = (space, sids) =>
+  MEAS.filter(m => sidMatch(sids, m.sid) && m.emb[space] && (labelOf(m) === 'normal' || labelOf(m) === 'abnormal'));
 
-function buildModel(space, reg, sid, name) {
-  const lambda = REG_LAMBDA[reg] || 1;
-  const ms = labeledFor(space, sid);
-  const nPos = ms.filter(m => labelOf(m) === 'abnormal').length, nNeg = ms.length - nPos;
-  if (ms.length < 6 || nPos < 2 || nNeg < 2) return null;
-  const X = ms.map(m => m.emb[space]), y = ms.map(m => labelOf(m) === 'abnormal' ? 1 : 0);
+/* ---------- データ拡張（生波形→埋め込み直し）とグループCV ---------- */
+function shiftWave(x, s) { const n = x.length, y = new Float32Array(n); for (let i = 0; i < n; i++) y[i] = x[((i - s) % n + n) % n]; return y; }
+let _gz = null;
+function gauss(rnd) { if (_gz != null) { const v = _gz; _gz = null; return v; } const u = Math.max(1e-9, rnd()), v = rnd(), r = Math.sqrt(-2 * Math.log(u)); _gz = r * Math.sin(2 * Math.PI * v); return r * Math.cos(2 * Math.PI * v); }
+function augWave(x, aug, rnd) {
+  let y = Float32Array.from(x);
+  if (aug.shift) y = shiftWave(y, Math.round((rnd() * 2 - 1) * aug.mag * 0.3 * y.length));
+  if (aug.gain) { const g = 1 + (rnd() * 2 - 1) * aug.mag; for (let i = 0; i < y.length; i++) y[i] *= g; }
+  if (aug.noise) { let rms = 0; for (const v of x) rms += v * v; rms = Math.sqrt(rms / x.length); const amp = aug.mag * rms; for (let i = 0; i < y.length; i++) y[i] += amp * gauss(rnd); }
+  return y;
+}
+async function embedWave(x, space) {
+  if (space === 'yamnet') { if (!yamnet) return null; return (await yamnetEmbed(x)).emb; }
+  const frames = melSpec(x);
+  if (space === 'dsp') return dspEmbed(frames);
+  if (space === 'melcnn') return melcnnEmbed(frames);
+  return null;
+}
+async function buildDataset(space, sids, aug) {   // 録音=グループ。各グループに元1件＋拡張N件の埋め込み
+  const ms = labeledFor(space, sids), groups = [];
+  const doAug = aug && aug.count > 0 && (aug.gain || aug.noise || aug.shift);
+  for (const m of ms) {
+    const y = labelOf(m) === 'abnormal' ? 1 : 0, augs = [];
+    if (doAug) {
+      const a = await dbGet('audio', m.t);
+      if (a) {
+        const x = Float32Array.from(new Int16Array(a.pcm), v => v / 32767), rnd = mulberry32((m.t >>> 0) ^ 0x9e3779b9);
+        for (let k = 0; k < aug.count; k++) { const e = await embedWave(augWave(x, aug, rnd), space); if (e) augs.push(e); }
+      }
+    }
+    groups.push({ t: m.t, m, y, orig: m.emb[space], augs });
+  }
+  return { ms, groups };
+}
+function cvScoresGrouped(groups, opts) {          // グループ単位で分割。テストは元データのみ、学習は元＋拡張
+  const G = groups.length, loo = G <= 40;
+  const folds = loo ? groups.map((_, i) => [i])
+    : (() => { const f = Array.from({ length: 5 }, () => []); [...groups.keys()].sort((a, b) => groups[a].y - groups[b].y).forEach((gi, k) => f[k % 5].push(gi)); return f; })();
+  const scores = new Array(G).fill(0.5), yTest = groups.map(g => g.y);
+  for (const te of folds) {
+    const teSet = new Set(te), trX = [], trY = [];
+    groups.forEach((g, gi) => { if (teSet.has(gi)) return; trX.push(g.orig); trY.push(g.y); g.augs.forEach(a => { trX.push(a); trY.push(g.y); }); });
+    if (!trX.length) continue;
+    const st = standardizer(trX, [...trX.keys()]);
+    const model = trainLogReg(trX.map(st.fn), trY, opts);
+    for (const gi of te) scores[gi] = predictLogReg(model, st.fn(groups[gi].orig));
+  }
+  return { scores, yTest, cv: loo ? 'Leave-One-Group-Out' : '5-fold(group)' };
+}
+function trainFull(groups, opts) {                // 全グループの元＋拡張で本番モデルを学習
+  const X = [], y = [];
+  groups.forEach(g => { X.push(g.orig); y.push(g.y); g.augs.forEach(a => { X.push(a); y.push(g.y); }); });
   const st = standardizer(X, [...X.keys()]);
-  const full = trainLogReg(X.map(st.fn), y, { lambda, iters: 400, lr: 0.5 });
-  const { scores, cv } = cvScores(X, y, { lambda, iters: 250, lr: 0.5 });
-  const best = bestThreshold(scores, y);
+  const full = trainLogReg(X.map(st.fn), y, opts);
+  return { w: full.w, b: full.b, mean: st.mean, std: st.std, nTrain: X.length };
+}
+
+async function buildModel(space, reg, sids, name, aug) {
+  const lambda = REG_LAMBDA[reg] || 1;
+  const { groups } = await buildDataset(space, sids, aug);
+  const nPos = groups.filter(g => g.y === 1).length, nNeg = groups.length - nPos;
+  if (groups.length < 6 || nPos < 2 || nNeg < 2) return null;
+  const cvr = cvScoresGrouped(groups, { lambda, iters: 250, lr: 0.5 });
+  const best = bestThreshold(cvr.scores, cvr.yTest);
+  const full = trainFull(groups, { lambda, iters: 400, lr: 0.5 });
   const r4 = a => Array.from(a, x => +x.toFixed(4));
+  const nAug = groups.reduce((s, g) => s + g.augs.length, 0);
   return {
-    id: Date.now(), name, space, reg, lambda, sid,
-    thr: +best.thr.toFixed(3), w: r4(full.w), b: +full.b.toFixed(4), mean: r4(st.mean), std: r4(st.std),
-    metrics: { auc: auc(scores, y), f1: best.f1, prec: best.prec, rec: best.rec, acc: best.acc, n: ms.length, nPos, nNeg, cv },
+    id: Date.now(), name, space, reg, lambda, sid: sids, aug,
+    thr: +best.thr.toFixed(3), w: r4(full.w), b: +full.b.toFixed(4), mean: r4(full.mean), std: r4(full.std),
+    metrics: { auc: auc(cvr.scores, cvr.yTest), f1: best.f1, prec: best.prec, rec: best.rec, acc: best.acc, n: groups.length, nPos, nNeg, nAug, cv: cvr.cv },
     createdAt: Date.now(), active: true
   };
 }
 
-async function saveModelFromReport(space, reg, sidSel) {
-  const sid = sidSel === 'all' ? 'all' : +sidSel;
-  const def = `${sid === 'all' ? '全体' : seriesName(sid)} / ${spaceName(space)} ${regLabel(reg)}`;
+async function saveModelFromReport(space) {
+  if (!REPORT) return;
+  const def = `${sidLabel(REPORT.sids)} / ${spaceName(space)} ${regLabel(REPORT.reg)}`;
   const name = prompt('モデル名', def);
   if (name === null) return;
-  const model = buildModel(space, reg, sid, name.trim() || def);
+  $('repSaveMsg').textContent = '学習中…';
+  const model = await buildModel(space, REPORT.reg, REPORT.sids, name.trim() || def, REPORT.aug);
   if (!model) { $('repSaveMsg').textContent = 'ラベル不足で保存できません'; return; }
   MODELS.push(model);
   await dbPut('models', model);
@@ -857,7 +937,7 @@ const judgeWithModel = (model, emb) => {
   const score = predictLogReg({ w: model.w, b: model.b }, applyStd(model.mean, model.std, emb));
   return { score, pred: score >= model.thr ? 'abnormal' : 'normal' };
 };
-const modelsFor = (sid, emb) => MODELS.filter(m => (m.sid === 'all' || m.sid === sid) && emb[m.space]);
+const modelsFor = (sid, emb) => MODELS.filter(m => sidMatch(m.sid, sid) && emb[m.space]);
 
 function judgeRecord(sid, emb) {              // 録音直後: 有効な適用可能モデルで判定
   return modelsFor(sid, emb).filter(m => m.active)
@@ -876,9 +956,10 @@ function renderModels() {
           <b>${m.name}</b>
           <span class="chip">${spaceName(m.space)}</span>
           <span class="chip">正則化:${regLabel(m.reg)}</span>
-          <span class="chip">対象:${m.sid === 'all' ? '全体' : seriesName(m.sid)}</span>
+          <span class="chip">対象:${sidLabel(m.sid)}</span>
+          ${m.aug && m.aug.count ? `<span class="chip">拡張×${m.aug.count}</span>` : ''}
         </div>
-        <p class="hint">AUC ${fmt(m.metrics.auc)} ／ F1 ${fmt(m.metrics.f1)} ／ 学習${m.metrics.n}件(正常${m.metrics.nNeg}/異常${m.metrics.nPos}) ／ しきい値 ${m.thr.toFixed(2)} ／ ${new Date(m.createdAt).toLocaleDateString('ja-JP')}</p>
+        <p class="hint">AUC ${fmt(m.metrics.auc)} ／ F1 ${fmt(m.metrics.f1)} ／ 学習${m.metrics.n}件(正常${m.metrics.nNeg}/異常${m.metrics.nPos})${m.metrics.nAug ? `＋拡張${m.metrics.nAug}` : ''} ／ しきい値 ${m.thr.toFixed(2)} ／ ${new Date(m.createdAt).toLocaleDateString('ja-JP')}</p>
         <div class="inline wrap">
           <label class="check"><input type="checkbox" class="mdl-active" ${m.active ? 'checked' : ''}> 録音時に使う</label>
           <button class="mini mdl-map">🗺 学習データ</button>
@@ -975,34 +1056,34 @@ window.openModelMap = openModelMap;
 
 /* ---------- モデル編集/再学習ダイアログ（データセット・空間・正則化を選び直せる） ---------- */
 let EDIT_ID = null, PREVIEW_MODEL = null;
-const previewText = m => `学習件数 ${m.metrics.n}（正常${m.metrics.nNeg}/異常${m.metrics.nPos}） ／ AUC ${isNaN(m.metrics.auc) ? '—' : m.metrics.auc.toFixed(3)} ／ F1 ${m.metrics.f1.toFixed(3)} ／ しきい値 ${m.thr.toFixed(2)}（${m.metrics.cv}）`;
-function fillMdSeries() {
-  $('mdSeries').innerHTML = '<option value="all">すべてのシリーズ</option>'
-    + CFG.series.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+const previewText = m => `学習件数 ${m.metrics.n}（正常${m.metrics.nNeg}/異常${m.metrics.nPos}）${m.metrics.nAug ? ` ＋拡張${m.metrics.nAug}` : ''} ／ AUC ${isNaN(m.metrics.auc) ? '—' : m.metrics.auc.toFixed(3)} ／ F1 ${m.metrics.f1.toFixed(3)} ／ しきい値 ${m.thr.toFixed(2)}（${m.metrics.cv}）`;
+function fillMdControls(model) {
+  $('mdSeriesBox').innerHTML = seriesChecksHTML('md', model ? model.sid : 'all');
+  wireSeriesChecks('md');
+  $('mdAugBox').innerHTML = augControlsHTML('md', model ? model.aug : null);
 }
 function openModelEditor(model) {
   EDIT_ID = model ? model.id : null; PREVIEW_MODEL = null;
   $('modelDlgTitle').textContent = model ? '⚙ モデル編集・再学習' : '＋ 新規モデル';
-  fillMdSeries();
   $('mdName').value = model ? model.name : '';
   $('mdSpace').value = model ? model.space : 'yamnet';
   $('mdReg').value = model ? model.reg : 'medium';
-  $('mdSeries').value = model ? String(model.sid) : 'all';
+  fillMdControls(model);
   $('mdPreview').innerHTML = model ? '現在: ' + previewText(model) + '<br>設定を変えたら「学習してプレビュー」→「保存」' : '設定を選んで「学習してプレビュー」';
   $('modelDlg').showModal();
 }
-function mdPreview() {
-  const space = $('mdSpace').value, reg = $('mdReg').value;
-  const sidSel = $('mdSeries').value, sid = sidSel === 'all' ? 'all' : +sidSel;
-  const name = $('mdName').value.trim() || `${sid === 'all' ? '全体' : seriesName(sid)} / ${spaceName(space)} ${regLabel(reg)}`;
-  const m = buildModel(space, reg, sid, name);
+async function mdPreview() {
+  const space = $('mdSpace').value, reg = $('mdReg').value, sids = readSeriesChecks('md'), aug = readAug('md');
+  const name = $('mdName').value.trim() || `${sidLabel(sids)} / ${spaceName(space)} ${regLabel(reg)}`;
+  $('mdPreview').innerHTML = '学習中…';
+  const m = await buildModel(space, reg, sids, name, aug);
   if (!m) { $('mdPreview').innerHTML = '<span class="warn">この設定・ラベルでは学習できません（各クラス2件以上・合計6件以上が必要）</span>'; PREVIEW_MODEL = null; return; }
   if (EDIT_ID) m.id = EDIT_ID;
   PREVIEW_MODEL = m;
   $('mdPreview').innerHTML = '結果: ' + previewText(m);
 }
 async function mdSaveModel() {
-  if (!PREVIEW_MODEL) { mdPreview(); if (!PREVIEW_MODEL) return; }
+  if (!PREVIEW_MODEL) { await mdPreview(); if (!PREVIEW_MODEL) return; }
   const m = PREVIEW_MODEL;
   m.name = $('mdName').value.trim() || m.name;
   if (EDIT_ID) {
@@ -1581,7 +1662,7 @@ function showTab(t) {
   ['viz', 'report', 'models', 'list'].forEach(k => $('tab-' + k).hidden = k !== t);
   document.querySelectorAll('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   if (t === 'viz') refreshViz();
-  if (t === 'report') renderReportSeries();
+  if (t === 'report') fillReportControls();
   if (t === 'models') renderModels();
 }
 $('navMeasure').onclick = () => showView('measure');
@@ -1756,12 +1837,11 @@ $('learnClose').onclick = () => $('learnDlg').close();
 document.querySelectorAll('[name=space]').forEach(r => r.onchange = () => { MAPCAM = { z: 1, ox: 0, oy: 0 }; drawMap(); });
 
 $('repRun').onclick = () => {
+  $('repRun').disabled = true;
   $('repSummary').textContent = '計算中…';
   $('repTable').innerHTML = ''; $('repDetail').innerHTML = '';
-  setTimeout(runReport, 30);                 // 先に「計算中」を描画してから実行
+  runReport().finally(() => { $('repRun').disabled = false; });
 };
-$('repReg').onchange = () => { if (REPORT) runReport(); };
-$('repSeries').onchange = () => { if (REPORT) runReport(); };
 
 $('mdlNew').onclick = () => openModelEditor(null);
 $('mdlReinfer').onclick = reinferAll;
